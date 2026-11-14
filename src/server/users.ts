@@ -1,10 +1,11 @@
 import { scryptSync } from "node:crypto";
 import { z } from "zod";
 import type { Branch, RoleCode, Scope, SessionUser, UserRecord } from "@/lib/types";
-import { ROLE_CODES } from "@/lib/rbac";
-import { DEMO_PASSWORD } from "./seed";
+import { DEMO_PASSWORD, departmentForRole } from "./seed";
 import { appendAudit, getStore, makeId } from "./store";
 import { ApiError, assertBranchScope, inScope } from "./access";
+import { effectivePermissionsForUser, getRoleDefinition, getRoleRank, isProtectedIdentity } from "./permissions";
+import { logPermissionChange } from "./access-log";
 import { matchesText, sortBy } from "./query";
 
 /** A user record with the password hash stripped. Never ship hashes to the client. */
@@ -31,15 +32,6 @@ export type UserDirectory = {
   };
 };
 
-const ROLE_VALUES = [
-  "SUPER_ADMIN",
-  "ADMIN",
-  "BRANCH_MANAGER",
-  "LOAN_OFFICER",
-  "CREDIT_OFFICER",
-  "COLLECTION_OFFICER",
-] as const;
-
 export const userFieldsSchema = z.object({
   name: z.string().trim().min(2, "Enter the full name (at least 2 characters).").max(80, "Name is too long."),
   email: z.string().trim().toLowerCase().email("Enter a valid email address."),
@@ -47,7 +39,7 @@ export const userFieldsSchema = z.object({
     .string()
     .trim()
     .regex(/^\+?[0-9][0-9\s-]{8,16}$/, "Enter a valid phone number (digits, spaces, +, -)."),
-  role: z.enum(ROLE_VALUES, { message: "Select a valid role." }),
+  role: z.string().trim().min(1, "Select a valid role."),
   designation: z.string().trim().min(2, "Enter a designation.").max(60, "Designation is too long."),
   branchId: z.string().trim().min(1, "Select a branch."),
 });
@@ -128,14 +120,42 @@ function findRecord(id: string): UserRecord {
 }
 
 function assertCanManageTarget(actor: SessionUser, target: UserRecord) {
+  if (isProtectedIdentity(target.id)) {
+    throw new ApiError(
+      403,
+      "PROTECTED_IDENTITY",
+      "The protected Super Admin identity is locked. Use a separate delegated grant record instead of changing it.",
+    );
+  }
+  if (target.id === actor.id) return;
   if (target.role === "SUPER_ADMIN" && actor.role !== "SUPER_ADMIN") {
     throw new ApiError(403, "FORBIDDEN", "Only a Super Admin can modify Super Admin accounts.");
+  }
+  if (!isProtectedIdentity(actor.id) && getRoleRank(target.role) >= getRoleRank(actor.role)) {
+    throw new ApiError(403, "RANK_EXCEEDED", "You cannot modify an account at or above your own authority level.");
   }
 }
 
 function assertCanAssignRole(actor: SessionUser, role: RoleCode) {
-  if (role === "SUPER_ADMIN" && actor.role !== "SUPER_ADMIN") {
-    throw new ApiError(403, "FORBIDDEN", "Only a Super Admin can grant the Super Admin role.");
+  const targetRole = getRoleDefinition(role);
+  if (!targetRole) {
+    throw new ApiError(422, "INVALID_ROLE", "Select a configured role.");
+  }
+  if (isProtectedIdentity(actor.id)) return;
+  if (targetRole.code === "SUPER_ADMIN") {
+    throw new ApiError(403, "FORBIDDEN", "Only the protected Super Admin can grant the Super Admin role.");
+  }
+  if (targetRole.rank > getRoleRank(actor.role)) {
+    throw new ApiError(403, "RANK_EXCEEDED", "You cannot assign a role with higher authority than your own.");
+  }
+  const held = new Set(effectivePermissionsForUser(actor.id));
+  const missing = targetRole.permissions.filter((permission) => !held.has(permission));
+  if (missing.length > 0) {
+    throw new ApiError(
+      403,
+      "DELEGATION_EXCEEDED",
+      `You cannot assign a role containing permissions you do not hold (${missing.slice(0, 3).join(", ")}).`,
+    );
   }
 }
 
@@ -171,6 +191,9 @@ export function createUserRecord(actor: SessionUser, scope: Scope, input: Create
     role: input.role,
     designation: input.designation,
     branchId: input.branchId,
+    branchIds: [input.branchId],
+    department: departmentForRole(input.role),
+    recordAccess: "BRANCH",
     status: "ACTIVE",
     avatarColor: AVATAR_COLORS[store.users.length % AVATAR_COLORS.length],
     lastLoginAt: null,
@@ -187,6 +210,17 @@ export function createUserRecord(actor: SessionUser, scope: Scope, input: Create
     record.id,
     `Created ${record.name} (${record.role.replaceAll("_", " ")}) in ${input.branchId} with the demo password.`,
   );
+  logPermissionChange({
+    actorId: actor.id,
+    actorRole: actor.role,
+    targetType: "USER",
+    targetId: record.id,
+    targetLabel: `${record.name} · ${record.role}`,
+    action: "USER_CREATED",
+    before: [],
+    after: getRoleDefinition(record.role)?.permissions ?? [],
+    reason: "User account created with role assignment.",
+  });
 
   return toDirectoryUser(record, actor.id);
 }
@@ -203,9 +237,14 @@ export function updateUserRecord(
   assertBranchScope(scope, input.branchId);
   assertBranchExists(input.branchId);
   assertCanManageTarget(actor, record);
+  if (record.id === actor.id && input.role !== record.role) {
+    throw new ApiError(403, "SELF_ROLE_CHANGE", "You cannot change your own role. Ask another authorized administrator.");
+  }
   assertCanAssignRole(actor, input.role);
   assertEmailAvailable(input.email, record.id);
 
+  const previousRole = record.role;
+  const previousPermissions = getRoleDefinition(previousRole)?.permissions ?? [];
   const changes: string[] = [];
   if (record.name !== input.name) changes.push("name");
   if (record.email.toLowerCase() !== input.email.toLowerCase()) changes.push("email");
@@ -223,6 +262,8 @@ export function updateUserRecord(
   record.role = input.role;
   record.designation = input.designation;
   record.branchId = input.branchId;
+  record.branchIds = [input.branchId];
+  record.department = departmentForRole(input.role);
 
   appendAudit(
     store,
@@ -232,6 +273,19 @@ export function updateUserRecord(
     record.id,
     `Updated ${record.name}: ${changes.join(", ")}.`,
   );
+  if (previousRole !== record.role) {
+    logPermissionChange({
+      actorId: actor.id,
+      actorRole: actor.role,
+      targetType: "USER",
+      targetId: record.id,
+      targetLabel: `${record.name} · ${previousRole} → ${record.role}`,
+      action: "ROLE_CHANGED",
+      before: previousPermissions,
+      after: getRoleDefinition(record.role)?.permissions ?? [],
+      reason: `Role reassigned from ${previousRole} to ${record.role}.`,
+    });
+  }
 
   return toDirectoryUser(record, actor.id);
 }
@@ -264,10 +318,24 @@ export function setUserStatus(
     record.id,
     `${record.name} set to ${status === "ACTIVE" ? "active" : "inactive"}.`,
   );
+  logPermissionChange({
+    actorId: actor.id,
+    actorRole: actor.role,
+    targetType: "USER",
+    targetId: record.id,
+    targetLabel: `${record.name} · account ${status.toLowerCase()}`,
+    action: "ACCOUNT_STATUS_CHANGED",
+    before: [`status:${status === "ACTIVE" ? "INACTIVE" : "ACTIVE"}`],
+    after: [`status:${status}`],
+    reason: "Account status changed, which changes effective permissions immediately.",
+  });
 
   return toDirectoryUser(record, actor.id);
 }
 
 export function roleCodes(): RoleCode[] {
-  return ROLE_CODES;
+  return getStore()
+    .roles.slice()
+    .sort((a, b) => b.rank - a.rank)
+    .map((role) => role.code);
 }

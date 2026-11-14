@@ -8,7 +8,7 @@ import type {
   SanctionStatus,
   SessionUser,
 } from "@/lib/types";
-import { ApiError, assertBranchScope, inScope } from "./access";
+import { ApiError, assertBranchScope, assertRecordPermission, canViewRecord, inScope } from "./access";
 import { getStore, makeId, appendAudit } from "./store";
 import { inDateRange, sortBy } from "./query";
 
@@ -84,7 +84,11 @@ function statusesForTab(tab: CreditTabKey) {
 }
 
 function scopedApplications(scope: Scope) {
-  return getStore().applications.filter((application) => inScope(scope, application.branchId));
+  return getStore().applications.filter(
+    (application) =>
+      inScope(scope, application.branchId) &&
+      canViewRecord(scope.user, "APPLICATION", application.id, "credit:view", application.branchId, application.ownerId),
+  );
 }
 
 function matchesFilters(application: LoanApplication, filters: CreditFilters) {
@@ -226,7 +230,13 @@ export function calculateEmi(principal: number, annualRate: number, tenureMonths
 export function getCreditApplication(scope: Scope, id: string): CreditDetail | null {
   const store = getStore();
   const application = store.applications.find((item) => item.id === id);
-  if (!application || !inScope(scope, application.branchId)) return null;
+  if (
+    !application ||
+    !inScope(scope, application.branchId) ||
+    !canViewRecord(scope.user, "APPLICATION", application.id, "credit:view", application.branchId, application.ownerId)
+  ) {
+    return null;
+  }
   const customer = store.customers.find((item) => item.id === application.customerId);
   if (!customer) return null;
 
@@ -338,6 +348,7 @@ export function applyCreditDecision(
   const application = store.applications.find((item) => item.id === id);
   if (!application) throw new ApiError(404, "NOT_FOUND", "Application not found.");
   assertBranchScope(scope, application.branchId);
+  assertRecordPermission(user, "APPLICATION", application.id, "credit:decide", application.branchId, application.ownerId);
 
   if (application.status !== "RECOMMENDED") {
     throw new ApiError(

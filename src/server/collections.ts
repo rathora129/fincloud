@@ -10,7 +10,7 @@ import type {
   SessionUser,
 } from "@/lib/types";
 import { formatINR } from "@/lib/utils";
-import { ApiError, assertBranchScope, buildScope, inScope } from "./access";
+import { ApiError, assertBranchScope, assertRecordPermission, buildScope, canViewRecord, inScope } from "./access";
 import { appendAudit, getStore, makeId } from "./store";
 
 const DAY = 86_400_000;
@@ -179,6 +179,20 @@ function toRow(
   };
 }
 
+function collectionVisible(scope: Scope, collectionCase: CollectionCase): boolean {
+  return (
+    inScope(scope, collectionCase.branchId) &&
+    canViewRecord(
+      scope.user,
+      "COLLECTION",
+      collectionCase.id,
+      "collections:view",
+      collectionCase.branchId,
+      collectionCase.assignedTo,
+    )
+  );
+}
+
 export function getCollectionsOverview(scope: Scope, filters: CollectionListFilters = {}): CollectionsOverview {
   const store = getStore();
   const customerById = new Map(store.customers.map((customer) => [customer.id, customer]));
@@ -186,7 +200,7 @@ export function getCollectionsOverview(scope: Scope, filters: CollectionListFilt
   const userById = new Map(store.users.map((user) => [user.id, user]));
   const branchById = new Map(store.branches.map((branch) => [branch.id, branch]));
 
-  const scoped = store.collectionCases.filter((collectionCase) => inScope(scope, collectionCase.branchId));
+  const scoped = store.collectionCases.filter((collectionCase) => collectionVisible(scope, collectionCase));
   const filtered = scoped.filter(
     (collectionCase) =>
       (!filters.bucket || collectionCase.bucket === filters.bucket) &&
@@ -250,7 +264,7 @@ export function getCollectionsOverview(scope: Scope, filters: CollectionListFilt
 
 export function getCollectionFilterOptions(scope: Scope): CollectionFilterOptions {
   const store = getStore();
-  const scopedCases = store.collectionCases.filter((collectionCase) => inScope(scope, collectionCase.branchId));
+  const scopedCases = store.collectionCases.filter((collectionCase) => collectionVisible(scope, collectionCase));
   const assignedIds = new Set(scopedCases.map((collectionCase) => collectionCase.assignedTo));
   const assignees = store.users
     .filter(
@@ -281,7 +295,7 @@ export function getCollectionFilterOptions(scope: Scope): CollectionFilterOption
 export function getCollectionDetail(scope: Scope, caseId: string): CollectionDetail | null {
   const store = getStore();
   const collectionCase = store.collectionCases.find((item) => item.id === caseId);
-  if (!collectionCase || !inScope(scope, collectionCase.branchId)) return null;
+  if (!collectionCase || !collectionVisible(scope, collectionCase)) return null;
 
   const customer = store.customers.find((item) => item.id === collectionCase.customerId) ?? null;
   const loan = store.loanAccounts.find((item) => item.id === collectionCase.loanAccountId) ?? null;
@@ -357,6 +371,14 @@ export function applyCollectionAction(
   const scope = buildScope(user);
   const { collectionCase } = findCaseOrThrow(caseId);
   assertBranchScope(scope, collectionCase.branchId);
+  assertRecordPermission(
+    user,
+    "COLLECTION",
+    collectionCase.id,
+    "collections:manage",
+    collectionCase.branchId,
+    collectionCase.assignedTo,
+  );
 
   if (collectionCase.status === "RESOLVED") {
     throw new ApiError(409, "CASE_RESOLVED", "This case is already resolved. No further action is possible.");
@@ -491,6 +513,7 @@ export function recordCollectionRepayment(
     throw new ApiError(404, "NOT_FOUND", "Linked loan account not found.");
   }
   assertBranchScope(scope, loan.branchId);
+  assertRecordPermission(user, "LOAN", loan.id, "collections:manage", loan.branchId);
 
   if (repayment.status !== "OVERDUE") {
     throw new ApiError(

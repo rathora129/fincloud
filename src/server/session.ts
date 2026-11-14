@@ -1,9 +1,9 @@
 import { cookies } from "next/headers";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { SessionUser } from "@/lib/types";
-import { permissionsForRole } from "@/lib/rbac";
 import { DEMO_SESSION_SECRET } from "./seed";
 import { getStore } from "./store";
+import { effectivePermissionsForUser, getRoleDefinition, isProtectedSuperAdmin } from "./permissions";
 
 export const SESSION_COOKIE = "fincloud_session";
 export const SESSION_TTL_SECONDS = 60 * 60 * 8;
@@ -46,15 +46,21 @@ export function toSessionUser(userId: string): SessionUser | null {
   const user = store.users.find((u) => u.id === userId);
   if (!user || user.status !== "ACTIVE") return null;
   const branch = store.branches.find((b) => b.id === user.branchId);
+  const role = getRoleDefinition(user.role);
   return {
     id: user.id,
     name: user.name,
     email: user.email,
     role: user.role,
+    roleName: role?.name ?? user.role,
     designation: user.designation,
+    department: user.department,
     branchId: user.branchId,
+    branchIds: user.branchIds,
     branchName: branch?.name ?? "Unassigned",
-    permissions: permissionsForRole(user.role),
+    recordAccess: user.recordAccess,
+    permissions: effectivePermissionsForUser(user.id),
+    isSuperAdmin: isProtectedSuperAdmin(user.id),
     avatarColor: user.avatarColor,
   };
 }

@@ -15,7 +15,8 @@
 | Tasks | `/tasks` | Seven-category operational board | `tasks:view`, `tasks:manage` | `server/tasks.ts` |
 | Authorizations | `/authorizations` | Payment/LMS/agency approvals | `authorizations:view`, `authorizations:approve` | `server/authorizations.ts` |
 | Reports & MIS | `/reports` | Server-computed reports, print, CSV/XLS | `reports:view`, `reports:export` | `server/reports.ts` |
-| Users & Roles | `/users` | User administration and permission matrix | `users:view`, `users:manage` | `server/users.ts` |
+| Users & Roles | `/users` | User administration and role assignment | `users:view`, `users:manage` | `server/users.ts` |
+| Access Control | `/access-control` | Roles, user grants, delegation, record access, audit history | `access:view`, `access:manage`, `access:delegate`, `roles:manage` | `server/access-control.ts`, `server/permissions.ts` |
 | Audit Logs | `/audit-logs` | Append-only activity trail | `audit:view` | `server/audit.ts` |
 | Support Operations | `/operations` | eSign, blacklist, grievances | `operations:view`, `operations:manage` | `server/operations.ts` |
 | My Profile | `/profile` | Own record, session, access matrix, demo preferences | session only | `server/session.ts` |
@@ -42,7 +43,8 @@ All workspace routes are guarded by `src/proxy.ts` for cookie presence and by a 
 | `/tasks` | Server + client board | Category columns, transitions, create/edit |
 | `/authorizations` | Server + client drawer | Approve/reject pending requests |
 | `/reports` | Server + client controls | Report selection, filters, print, export links |
-| `/users` | Server + client modals | Create/edit, activate/deactivate |
+| `/users` | Server + client modals | Create/edit, activate/deactivate, role assignment |
+| `/access-control` | Server + client tabs | User access, role matrix, grants & delegation, access history, compare |
 | `/audit-logs` | Server + client table | Filters and detail modal |
 | `/operations` | Server + client tabs | eSign, blacklist, grievances |
 | `/profile` | Server | Own access matrix and demo preferences |
@@ -77,6 +79,15 @@ Every handler uses `requireSession`, Zod validation, `errorResponse` envelopes a
 | `PATCH /api/authorizations/[id]` | `authorizations:approve` | Approve or reject |
 | `POST /api/users` | `users:manage` | Create a user (demo password hashed) |
 | `PATCH /api/users/[id]` | `users:manage` | `UPDATE` or `SET_STATUS` |
+| `GET /api/access-control` | `access:view` | Access center snapshot (users, roles, grants, audits, permissions, branches) |
+| `GET /api/access-control/users/[id]` | `access:view` | User access detail or context-aware effective-permission preview |
+| `PATCH /api/access-control/users/[id]` | `access:manage` | Branch set, department, record access, reason |
+| `POST /api/access-control/grants` | `access:manage` | Create scoped allow/deny grant (direct/delegated, optional expiry) |
+| `POST /api/access-control/grants/[id]/revoke` | `access:manage` | Revoke a grant with reason |
+| `POST /api/access-control/roles` | `roles:manage` | Create a custom role |
+| `PATCH /api/access-control/roles/[code]` | `roles:manage` | Update role metadata and permission set |
+| `GET /api/access-control/history` | `access:view` | Read-only permission audit feed |
+| `GET /api/access-control/compare?left=&right=` | `access:view` | Effective-permission comparison |
 | `GET /api/exports/[report]` | `reports:export` | CSV or SpreadsheetML `.xls` export |
 | `POST /api/blacklist` | `operations:manage` | Add a blacklist entry |
 | `PATCH /api/grievances/[id]` | `operations:manage` | Update grievance status/priority |
@@ -97,6 +108,7 @@ Every handler uses `requireSession`, Zod validation, `errorResponse` envelopes a
 | `services/tasks.ts` | `tasksService.*` | Task board |
 | `services/authorizations.ts` | `authorizationsService.*` | Authorization drawer |
 | `services/users.ts` | `createUser`, `updateUser`, `setUserStatus` | User administration |
+| `services/access-control.ts` | `fetchAccessCenter`, `fetchUserAccess`, `previewUserAccess`, `compareAccess`, `createAccessGrant`, `revokeAccessGrant`, `createAccessRole`, `updateAccessRole`, `updateAccessScope`, `fetchPermissionHistory` | Access Control Center |
 | `services/operations.ts` | `addBlacklistEntry`, `updateGrievance` | Support operations |
 | `services/reports.ts` | `isReportKey`, `reportExportUrl` | Report controls |
 
@@ -117,6 +129,7 @@ List and detail pages are Server Components, so they call `src/server/*` directl
 | Authorizations | `server/authorizations` queue | `POST /api/authorizations`, `PATCH /api/authorizations/[id]` |
 | Reports | `server/reports` computes from URL filters | `GET /api/exports/[report]` |
 | Users | `server/users` scoped list | `POST /api/users`, `PATCH /api/users/[id]` |
+| Access Control | `server/access-control` center + user detail + preview | `POST/PATCH /api/access-control/*`, audited through `logPermissionChange` |
 | Audit | `server/audit` scoped query | append-only writes from every mutation |
 | Operations | `server/operations` panels | `POST /api/blacklist`, `PATCH /api/grievances/[id]` |
 

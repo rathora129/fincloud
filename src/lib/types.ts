@@ -9,13 +9,7 @@ export type PageMeta = {
 
 export type Page<T> = PageMeta & { items: T[] };
 
-export type RoleCode =
-  | "SUPER_ADMIN"
-  | "ADMIN"
-  | "BRANCH_MANAGER"
-  | "LOAN_OFFICER"
-  | "CREDIT_OFFICER"
-  | "COLLECTION_OFFICER";
+export type RoleCode = string;
 
 export type Permission =
   | "dashboard:view"
@@ -44,7 +38,98 @@ export type Permission =
   | "reports:export"
   | "audit:view"
   | "operations:view"
-  | "operations:manage";
+  | "operations:manage"
+  | "access:view"
+  | "access:manage"
+  | "access:delegate"
+  | "roles:manage";
+
+export type RoleDefinition = {
+  code: RoleCode;
+  name: string;
+  shortLabel: string;
+  description: string;
+  permissions: Permission[];
+  rank: number;
+  isSystem: boolean;
+  isGlobal: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type RecordType =
+  | "CUSTOMER"
+  | "LEAD"
+  | "APPLICATION"
+  | "SANCTION"
+  | "LOAN"
+  | "DISBURSEMENT"
+  | "COLLECTION"
+  | "TASK"
+  | "BRANCH"
+  | "DEPARTMENT"
+  | "ORGANIZATION";
+
+export type AccessScopeType = "GLOBAL" | "BRANCH" | "DEPARTMENT" | "RECORD";
+
+export type AccessGrant = {
+  id: ID;
+  subjectId: ID;
+  permission: Permission;
+  effect: "ALLOW" | "DENY";
+  scopeType: AccessScopeType;
+  branchId: ID | null;
+  department: string | null;
+  recordType: RecordType | null;
+  recordId: ID | null;
+  mode: "DIRECT" | "DELEGATED";
+  reason: string;
+  grantedBy: ID;
+  grantedAt: string;
+  expiresAt: string | null;
+  revokedBy: ID | null;
+  revokedAt: string | null;
+  revokedReason: string | null;
+};
+
+export type PermissionAudit = {
+  id: ID;
+  at: string;
+  actorId: ID;
+  actorRole: RoleCode;
+  targetType: "USER" | "ROLE" | "GRANT";
+  targetId: ID;
+  targetLabel: string;
+  action: string;
+  before: string[];
+  after: string[];
+  reason: string;
+  ip: string;
+  expiresAt: string | null;
+};
+
+export type GrantSource = {
+  kind: "ROLE" | "USER" | "BRANCH" | "DEPARTMENT" | "RECORD" | "SUPER_ADMIN";
+  label: string;
+  grantId?: ID;
+  expiresAt?: string | null;
+  recordType?: RecordType;
+  recordId?: ID;
+};
+
+export type EffectivePermission = {
+  permission: Permission;
+  allowed: boolean;
+  sources: GrantSource[];
+  deniedBy: GrantSource[];
+};
+
+export type AccessContext = {
+  branchId?: ID;
+  department?: string;
+  recordType?: RecordType;
+  recordId?: ID;
+};
 
 export type Branch = {
   id: ID;
@@ -62,6 +147,9 @@ export type User = {
   role: RoleCode;
   designation: string;
   branchId: ID;
+  branchIds: ID[];
+  department: string;
+  recordAccess: "BRANCH" | "ASSIGNED";
   status: "ACTIVE" | "INACTIVE";
   avatarColor: string;
   lastLoginAt: string | null;
@@ -75,10 +163,15 @@ export type SessionUser = {
   name: string;
   email: string;
   role: RoleCode;
+  roleName: string;
   designation: string;
+  department: string;
   branchId: ID;
+  branchIds: ID[];
   branchName: string;
+  recordAccess: "BRANCH" | "ASSIGNED";
   permissions: Permission[];
+  isSuperAdmin: boolean;
   avatarColor: string;
 };
 
@@ -458,6 +551,10 @@ export type ESignRequest = {
 export type Store = {
   branches: Branch[];
   users: UserRecord[];
+  roles: RoleDefinition[];
+  accessGrants: AccessGrant[];
+  permissionAudits: PermissionAudit[];
+  security: { protectedSuperAdminId: ID };
   customers: Customer[];
   leads: Lead[];
   applications: LoanApplication[];

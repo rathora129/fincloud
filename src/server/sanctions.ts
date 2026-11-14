@@ -1,5 +1,5 @@
 import type { ID, LoanApplication, Sanction, SanctionStatus, Scope, SessionUser, Customer } from "@/lib/types";
-import { ApiError, assertBranchScope, inScope } from "./access";
+import { ApiError, assertBranchScope, assertRecordPermission, canViewRecord, inScope } from "./access";
 import { appendAudit, getStore, makeId } from "./store";
 import { inDateRange, sortBy } from "./query";
 
@@ -55,8 +55,19 @@ export type SanctionSummary = {
   decidedLast30Days: number;
 };
 
+function sanctionOwnerId(sanction: Sanction): string | undefined {
+  return getStore().applications.find((application) => application.id === sanction.applicationId)?.ownerId;
+}
+
+function sanctionVisible(scope: Scope, sanction: Sanction): boolean {
+  return (
+    inScope(scope, sanction.branchId) &&
+    canViewRecord(scope.user, "SANCTION", sanction.id, "sanctions:view", sanction.branchId, sanctionOwnerId(sanction))
+  );
+}
+
 function scopedSanctions(scope: Scope) {
-  return getStore().sanctions.filter((sanction) => inScope(scope, sanction.branchId));
+  return getStore().sanctions.filter((sanction) => sanctionVisible(scope, sanction));
 }
 
 function matchesFilters(sanction: Sanction, application: LoanApplication | undefined, filters: SanctionFilters) {
@@ -186,7 +197,7 @@ function amortisedEmi(principal: number, annualRate: number, tenureMonths: numbe
 export function getSanctionDetail(scope: Scope, id: string): SanctionDetail | null {
   const store = getStore();
   const sanction = store.sanctions.find((item) => item.id === id);
-  if (!sanction || !inScope(scope, sanction.branchId)) return null;
+  if (!sanction || !sanctionVisible(scope, sanction)) return null;
 
   const application = store.applications.find((item) => item.id === sanction.applicationId) ?? null;
   const customer = store.customers.find((item) => item.id === sanction.customerId) ?? null;
@@ -275,6 +286,14 @@ export function applySanctionAction(
   const sanction = store.sanctions.find((item) => item.id === id);
   if (!sanction) throw new ApiError(404, "NOT_FOUND", "Sanction record not found.");
   assertBranchScope(scope, sanction.branchId);
+  assertRecordPermission(
+    user,
+    "SANCTION",
+    sanction.id,
+    "sanctions:decide",
+    sanction.branchId,
+    sanctionOwnerId(sanction),
+  );
 
   const remarks = (input.remarks ?? "").trim();
   const now = new Date().toISOString();

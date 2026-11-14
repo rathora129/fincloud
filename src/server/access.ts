@@ -1,6 +1,6 @@
-import type { Permission, Scope, SessionUser } from "@/lib/types";
-import { isGlobalRole } from "@/lib/rbac";
+import type { AccessContext, Permission, RecordType, Scope, SessionUser } from "@/lib/types";
 import { getSessionUser } from "./session";
+import { canAccessRecord, hasPermission, roleIsGlobal } from "./permissions";
 
 export class ApiError extends Error {
   status: number;
@@ -19,15 +19,40 @@ export async function requireSession(): Promise<SessionUser> {
   return user;
 }
 
-export function assertPermission(user: SessionUser, permission: Permission) {
-  if (!user.permissions.includes(permission)) {
+export function assertPermission(user: SessionUser, permission: Permission, context?: AccessContext) {
+  if (!hasPermission(user.id, permission, context)) {
     throw new ApiError(403, "FORBIDDEN", "You do not have permission to perform this action.");
   }
 }
 
+export function assertRecordPermission(
+  user: SessionUser,
+  recordType: RecordType,
+  recordId: string,
+  permission: Permission,
+  branchId?: string,
+  ownerId?: string,
+) {
+  if (!canAccessRecord(user.id, recordType, recordId, permission, branchId, ownerId)) {
+    throw new ApiError(403, "FORBIDDEN", "You do not have access to this record.");
+  }
+}
+
+export function canViewRecord(
+  user: SessionUser,
+  recordType: RecordType,
+  recordId: string,
+  permission: Permission,
+  branchId?: string,
+  ownerId?: string,
+) {
+  return canAccessRecord(user.id, recordType, recordId, permission, branchId, ownerId);
+}
+
 export function buildScope(user: SessionUser): Scope {
-  const global = isGlobalRole(user.role);
-  return { user, isGlobal: global, branchIds: global ? null : [user.branchId] };
+  const global = roleIsGlobal(user.role);
+  const branches = user.branchIds?.length ? user.branchIds : [user.branchId];
+  return { user, isGlobal: global, branchIds: global ? null : branches };
 }
 
 export function inScope(scope: Scope, branchId: string) {
@@ -38,6 +63,15 @@ export function assertBranchScope(scope: Scope, branchId: string) {
   if (!inScope(scope, branchId)) {
     throw new ApiError(403, "OUT_OF_SCOPE", "This record belongs to another branch.");
   }
+}
+
+export function clientIp(request: Request) {
+  const forwarded = request.headers.get("x-forwarded-for");
+  if (forwarded) {
+    const first = forwarded.split(",")[0]?.trim();
+    if (first) return first;
+  }
+  return request.headers.get("x-real-ip")?.trim() || "127.0.0.1";
 }
 
 export function asString(value: unknown): string | undefined {

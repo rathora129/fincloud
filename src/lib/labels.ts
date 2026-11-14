@@ -117,9 +117,16 @@ export const ROLE_LABELS: Record<string, string> = {
   SUPER_ADMIN: "Super Admin",
   ADMIN: "Admin",
   BRANCH_MANAGER: "Branch Manager",
+  TEAM_LEADER: "Team Leader",
+  SENIOR_LOAN_OFFICER: "Senior Loan Officer",
   LOAN_OFFICER: "Loan Officer",
+  JUNIOR_LOAN_OFFICER: "Junior Loan Officer",
+  CREDIT_MANAGER: "Credit Manager",
   CREDIT_OFFICER: "Credit Officer",
+  COLLECTION_MANAGER: "Collection Manager",
   COLLECTION_OFFICER: "Collection Officer",
+  ACCOUNTS_OFFICER: "Accounts Officer",
+  MIS_EXECUTIVE: "MIS Executive",
 };
 
 export const GENDER_LABELS: Record<string, string> = {

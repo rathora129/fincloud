@@ -1,5 +1,6 @@
 import { scryptSync } from "node:crypto";
 import type {
+  AccessGrant,
   Activity,
   ApplicationStatus,
   AuditLog,
@@ -19,6 +20,7 @@ import type {
   LoanApplication,
   LoanProduct,
   Notification,
+  PermissionAudit,
   Repayment,
   Sanction,
   Store,
@@ -28,6 +30,7 @@ import type {
   TaskStatus,
   UserRecord,
 } from "@/lib/types";
+import { DEFAULT_ROLES } from "@/lib/rbac";
 import { stateForCity } from "@/lib/geo";
 
 export const DEMO_PASSWORD = "Fincloud@2026";
@@ -122,6 +125,8 @@ const USER_ROWS: Array<{
   { name: "Aditya Sharma", email: "credit.pune@fincloud.demo", role: "CREDIT_OFFICER", designation: "Credit Analyst", branchId: "br-pune", lastLoginDays: 1 },
   { name: "Ritu Jain", email: "collections.mumbai@fincloud.demo", role: "COLLECTION_OFFICER", designation: "Collection Team Lead", branchId: "br-mumbai", lastLoginDays: 0 },
   { name: "Suresh Patil", email: "collections.pune@fincloud.demo", role: "COLLECTION_OFFICER", designation: "Collection Officer", branchId: "br-pune", lastLoginDays: 2 },
+  { name: "Ishaan Verma", email: "teamlead.mumbai@fincloud.demo", role: "TEAM_LEADER", designation: "Sales Team Lead", branchId: "br-mumbai", lastLoginDays: 1 },
+  { name: "Pooja Sethi", email: "jro.mumbai@fincloud.demo", role: "JUNIOR_LOAN_OFFICER", designation: "Junior Loan Officer", branchId: "br-mumbai", lastLoginDays: 0 },
   {
     name: "Tanvi Shah",
     email: "officer.suspended@fincloud.demo",
@@ -132,6 +137,33 @@ const USER_ROWS: Array<{
     lastLoginDays: 60,
   },
 ];
+
+export function departmentForRole(role: string) {
+  switch (role) {
+    case "SUPER_ADMIN":
+    case "ADMIN":
+      return "Management";
+    case "BRANCH_MANAGER":
+      return "Branch Operations";
+    case "TEAM_LEADER":
+    case "SENIOR_LOAN_OFFICER":
+    case "LOAN_OFFICER":
+    case "JUNIOR_LOAN_OFFICER":
+      return "Sales";
+    case "CREDIT_MANAGER":
+    case "CREDIT_OFFICER":
+      return "Credit";
+    case "COLLECTION_MANAGER":
+    case "COLLECTION_OFFICER":
+      return "Collections";
+    case "ACCOUNTS_OFFICER":
+      return "Finance";
+    case "MIS_EXECUTIVE":
+      return "MIS";
+    default:
+      return "Operations";
+  }
+}
 
 const FIRST_NAMES = [
   "Aarav", "Ishita", "Kabir", "Sneha", "Rahul", "Pooja", "Karan", "Nisha", "Sameer", "Ayesha",
@@ -257,6 +289,9 @@ export function buildSeed(): Store {
     role: row.role,
     designation: row.designation,
     branchId: row.branchId,
+    branchIds: [row.branchId],
+    department: departmentForRole(row.role),
+    recordAccess: "BRANCH",
     status: row.status ?? "ACTIVE",
     avatarColor: AVATAR_COLORS[i % AVATAR_COLORS.length],
     lastLoginAt: row.lastLoginDays === undefined ? null : daysAgo(row.lastLoginDays, -i),
@@ -913,9 +948,129 @@ export function buildSeed(): Store {
     };
   });
 
+  const roles = DEFAULT_ROLES.map((role) => ({
+    ...role,
+    permissions: [...role.permissions],
+    createdAt: daysAgo(520),
+    updatedAt: daysAgo(45),
+  }));
+
+  const recordGrantApp = applications[0];
+  const accessGrants: AccessGrant[] = [
+    {
+      id: "grant-0001",
+      subjectId: "usr-006",
+      permission: "credit:decide",
+      effect: "ALLOW",
+      scopeType: "BRANCH",
+      branchId: "br-mumbai",
+      department: null,
+      recordType: null,
+      recordId: null,
+      mode: "DIRECT",
+      reason: "Temporary credit approval cover while the Mumbai credit manager is on leave.",
+      grantedBy: "usr-001",
+      grantedAt: daysAgo(2),
+      expiresAt: daysAhead(9),
+      revokedBy: null,
+      revokedAt: null,
+      revokedReason: null,
+    },
+    {
+      id: "grant-0002",
+      subjectId: "usr-016",
+      permission: "applications:manage",
+      effect: "ALLOW",
+      scopeType: "RECORD",
+      branchId: recordGrantApp?.branchId ?? null,
+      department: null,
+      recordType: "APPLICATION",
+      recordId: recordGrantApp?.id ?? null,
+      mode: "DIRECT",
+      reason: "Junior officer assisting on one supervised file only.",
+      grantedBy: "usr-003",
+      grantedAt: daysAgo(1),
+      expiresAt: daysAhead(14),
+      revokedBy: null,
+      revokedAt: null,
+      revokedReason: null,
+    },
+    {
+      id: "grant-0003",
+      subjectId: "usr-015",
+      permission: "leads:assign",
+      effect: "DENY",
+      scopeType: "GLOBAL",
+      branchId: null,
+      department: null,
+      recordType: null,
+      recordId: null,
+      mode: "DIRECT",
+      reason: "Sourcing pod policy: team leads cannot reassign leads outside their pod.",
+      grantedBy: "usr-001",
+      grantedAt: daysAgo(12),
+      expiresAt: null,
+      revokedBy: null,
+      revokedAt: null,
+      revokedReason: null,
+    },
+  ];
+
+  const permissionAudits: PermissionAudit[] = [
+    {
+      id: "paud-0001",
+      at: daysAgo(2),
+      actorId: "usr-001",
+      actorRole: "SUPER_ADMIN",
+      targetType: "GRANT",
+      targetId: "grant-0001",
+      targetLabel: "Neha Kulkarni · credit:decide · Mumbai branch",
+      action: "GRANT_CREATED",
+      before: [],
+      after: ["credit:decide"],
+      reason: "Temporary credit approval cover while the Mumbai credit manager is on leave.",
+      ip: "10.24.0.10",
+      expiresAt: daysAhead(9),
+    },
+    {
+      id: "paud-0002",
+      at: daysAgo(1),
+      actorId: "usr-003",
+      actorRole: "BRANCH_MANAGER",
+      targetType: "GRANT",
+      targetId: "grant-0002",
+      targetLabel: "Pooja Sethi · applications:manage · APPLICATION app-0001",
+      action: "GRANT_CREATED",
+      before: [],
+      after: ["applications:manage"],
+      reason: "Junior officer assisting on one supervised file only.",
+      ip: "10.24.2.41",
+      expiresAt: daysAhead(14),
+    },
+    {
+      id: "paud-0003",
+      at: daysAgo(12),
+      actorId: "usr-001",
+      actorRole: "SUPER_ADMIN",
+      targetType: "GRANT",
+      targetId: "grant-0003",
+      targetLabel: "Ishaan Verma · leads:assign · global restriction",
+      action: "GRANT_CREATED",
+      before: [],
+      after: ["leads:assign (denied)"],
+      reason: "Sourcing pod policy: team leads cannot reassign leads outside their pod.",
+      ip: "10.24.0.10",
+      expiresAt: null,
+    },
+  ];
+
   return {
     branches: BRANCHES,
     users,
+    roles,
+    accessGrants,
+    permissionAudits,
+    security: { protectedSuperAdminId: "usr-001" },
     customers,
     leads,
     applications,

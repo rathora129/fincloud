@@ -6,7 +6,7 @@ import type {
 } from "@/lib/types";
 import { getStore } from "./store";
 import { inDateRange, monthBuckets, monthKey, sortBy } from "./query";
-import { inScope } from "./access";
+import { canViewRecord, inScope } from "./access";
 
 export type DashboardFilters = {
   branchId?: string;
@@ -32,7 +32,8 @@ export function getDashboardData(scope: Scope, filters: DashboardFilters = {}): 
     (l) =>
       inBranch(l.branchId) &&
       (!filters.ownerId || l.ownerId === filters.ownerId) &&
-      inDateRange(l.createdAt, from, to),
+      inDateRange(l.createdAt, from, to) &&
+      canViewRecord(scope.user, "LEAD", l.id, "leads:view", l.branchId, l.ownerId),
   );
 
   const applications = store.applications.filter(
@@ -41,7 +42,8 @@ export function getDashboardData(scope: Scope, filters: DashboardFilters = {}): 
       (!filters.ownerId || a.ownerId === filters.ownerId || a.creditOfficerId === filters.ownerId) &&
       (!filters.product || a.product === filters.product) &&
       (!filters.status || a.status === filters.status) &&
-      inDateRange(a.createdAt, from, to),
+      inDateRange(a.createdAt, from, to) &&
+      canViewRecord(scope.user, "APPLICATION", a.id, "applications:view", a.branchId, a.ownerId),
   );
   const appById = new Map(store.applications.map((a) => [a.id, a]));
 
@@ -49,11 +51,22 @@ export function getDashboardData(scope: Scope, filters: DashboardFilters = {}): 
     (d) =>
       inBranch(d.branchId) &&
       (!filters.product || appById.get(d.applicationId)?.product === filters.product) &&
-      inDateRange(d.requestedAt, from, to),
+      inDateRange(d.requestedAt, from, to) &&
+      canViewRecord(
+        scope.user,
+        "DISBURSEMENT",
+        d.id,
+        "disbursements:view",
+        d.branchId,
+        appById.get(d.applicationId)?.ownerId,
+      ),
   );
   const completedDisbursements = disbursements.filter((d) => d.status === "COMPLETED");
   const loans = store.loanAccounts.filter(
-    (l) => inBranch(l.branchId) && (!filters.product || appById.get(l.applicationId)?.product === filters.product),
+    (l) =>
+      inBranch(l.branchId) &&
+      (!filters.product || appById.get(l.applicationId)?.product === filters.product) &&
+      canViewRecord(scope.user, "LOAN", l.id, "collections:view", l.branchId),
   );
   const scopedLoanIds = new Set(loans.map((l) => l.id));
   const repayments = store.repayments.filter((r) => scopedLoanIds.has(r.loanAccountId));
@@ -62,7 +75,10 @@ export function getDashboardData(scope: Scope, filters: DashboardFilters = {}): 
   const dueAmount = dueInWindow.reduce((acc, r) => acc + r.amount, 0);
   const paidAmount = paidInWindow.reduce((acc, r) => acc + r.amount, 0);
 
-  const tasks = store.tasks.filter((t) => inBranch(t.branchId));
+  const tasks = store.tasks.filter(
+    (t) =>
+      inBranch(t.branchId) && canViewRecord(scope.user, "TASK", t.id, "tasks:view", t.branchId, t.assigneeId),
+  );
   const openTasks = tasks.filter((t) => !["COMPLETED", "CANCELLED"].includes(t.status));
   const todayEnd = new Date();
   todayEnd.setHours(23, 59, 59, 999);
@@ -138,7 +154,12 @@ export function getDashboardData(scope: Scope, filters: DashboardFilters = {}): 
       const disbursed = completedDisbursements
         .filter((d) => d.processedBy === u.id)
         .reduce((acc, d) => acc + d.amount, 0);
-      const collections = store.collectionCases.filter((c) => c.assignedTo === u.id && c.status === "RESOLVED").length;
+      const collections = store.collectionCases.filter(
+        (c) =>
+          c.assignedTo === u.id &&
+          c.status === "RESOLVED" &&
+          canViewRecord(scope.user, "COLLECTION", c.id, "collections:view", c.branchId, c.assignedTo),
+      ).length;
       const tasksCompleted = tasks.filter((t) => t.assigneeId === u.id && t.status === "COMPLETED").length;
       return {
         userId: u.id,
@@ -157,12 +178,26 @@ export function getDashboardData(scope: Scope, filters: DashboardFilters = {}): 
   const branchPerformance = store.branches
     .filter((b) => inScope(scope, b.id) && (!filters.branchId || b.id === filters.branchId))
     .map((b) => {
-      const branchLoans = store.loanAccounts.filter((l) => l.branchId === b.id);
+      const branchLoans = store.loanAccounts.filter(
+        (l) => l.branchId === b.id && canViewRecord(scope.user, "LOAN", l.id, "collections:view", l.branchId),
+      );
       const branchLoanIds = new Set(branchLoans.map((l) => l.id));
       return {
         branch: b.name.split("—")[0].trim(),
         disbursed: store.disbursements
-          .filter((d) => d.branchId === b.id && d.status === "COMPLETED")
+          .filter(
+            (d) =>
+              d.branchId === b.id &&
+              d.status === "COMPLETED" &&
+              canViewRecord(
+                scope.user,
+                "DISBURSEMENT",
+                d.id,
+                "disbursements:view",
+                d.branchId,
+                appById.get(d.applicationId)?.ownerId,
+              ),
+          )
           .reduce((acc, d) => acc + d.amount, 0),
         collected: store.repayments
           .filter((r) => branchLoanIds.has(r.loanAccountId) && r.status === "PAID" && r.paidDate && inDateRange(r.paidDate, from, to))

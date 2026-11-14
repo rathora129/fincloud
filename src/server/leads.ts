@@ -8,7 +8,15 @@ import type {
   Scope,
   SessionUser,
 } from "@/lib/types";
-import { ApiError, assertBranchScope, assertPermission, buildScope, inScope } from "./access";
+import {
+  ApiError,
+  assertBranchScope,
+  assertPermission,
+  assertRecordPermission,
+  buildScope,
+  canViewRecord,
+  inScope,
+} from "./access";
 import { appendAudit, getStore, makeId, nextSequence } from "./store";
 import { inDateRange, matchesText, sortBy } from "./query";
 import { LEAD_TRANSITIONS, PRODUCT_RATES } from "@/lib/lead-flow";
@@ -101,7 +109,10 @@ export function getLeadsWorkspace(user: SessionUser, filters: LeadFilters) {
   const tab = filters.tab && TAB_MATCHERS[filters.tab] ? filters.tab : "all";
 
   const scopedLeads = store.leads.filter(
-    (lead) => inScope(scope, lead.branchId) && (!filters.ownerId || lead.ownerId === filters.ownerId),
+    (lead) =>
+      inScope(scope, lead.branchId) &&
+      canAccessLead(user, lead, "leads:view") &&
+      (!filters.ownerId || lead.ownerId === filters.ownerId),
   );
 
   const counts: LeadCounts = {
@@ -126,7 +137,15 @@ export function getLeadsWorkspace(user: SessionUser, filters: LeadFilters) {
       (u) =>
         u.status === "ACTIVE" &&
         inScope(scope, u.branchId) &&
-        ["LOAN_OFFICER", "BRANCH_MANAGER", "CREDIT_OFFICER", "COLLECTION_OFFICER"].includes(u.role),
+        [
+          "TEAM_LEADER",
+          "SENIOR_LOAN_OFFICER",
+          "LOAN_OFFICER",
+          "JUNIOR_LOAN_OFFICER",
+          "BRANCH_MANAGER",
+          "CREDIT_OFFICER",
+          "COLLECTION_OFFICER",
+        ].includes(u.role),
     )
     .map((u) => ({ id: u.id, name: u.name, branchId: u.branchId, color: u.avatarColor }));
 
@@ -149,12 +168,17 @@ export function getLeadsWorkspace(user: SessionUser, filters: LeadFilters) {
   };
 }
 
+function canAccessLead(user: SessionUser, lead: Lead, permission: "leads:view" | "leads:manage" | "leads:assign") {
+  return canViewRecord(user, "LEAD", lead.id, permission, lead.branchId, lead.ownerId);
+}
+
 export function getLeadDetail(user: SessionUser, leadId: string): LeadDetailView {
   const store = getStore();
   const scope = buildScope(user);
   const lead = store.leads.find((item) => item.id === leadId);
   if (!lead) throw new ApiError(404, "LEAD_NOT_FOUND", "Lead not found.");
   assertBranchScope(scope, lead.branchId);
+  assertRecordPermission(user, "LEAD", lead.id, "leads:view", lead.branchId, lead.ownerId);
 
   const owner = store.users.find((u) => u.id === lead.ownerId);
   const branch = store.branches.find((b) => b.id === lead.branchId);
@@ -199,12 +223,13 @@ export function getLeadDetail(user: SessionUser, leadId: string): LeadDetailView
   };
 }
 
-function scopeLead(user: SessionUser, leadId: string) {
+function scopeLead(user: SessionUser, leadId: string, permission: "leads:manage" | "leads:assign" = "leads:manage") {
   const store = getStore();
   const scope = buildScope(user);
   const lead = store.leads.find((item) => item.id === leadId);
   if (!lead) throw new ApiError(404, "LEAD_NOT_FOUND", "Lead not found.");
   assertBranchScope(scope, lead.branchId);
+  assertRecordPermission(user, "LEAD", lead.id, permission, lead.branchId, lead.ownerId);
   return { store, scope, lead };
 }
 
@@ -305,7 +330,7 @@ export function updateLead(
 
 export function assignLead(user: SessionUser, leadId: string, ownerId: string) {
   assertPermission(user, "leads:assign");
-  const { store, scope, lead } = scopeLead(user, leadId);
+  const { store, scope, lead } = scopeLead(user, leadId, "leads:assign");
   const owner = store.users.find((u) => u.id === ownerId && u.status === "ACTIVE");
   if (!owner || !inScope(scope, owner.branchId)) {
     throw new ApiError(422, "INVALID_OWNER", "Selected owner is outside your scope.");

@@ -37,7 +37,7 @@ sequenceDiagram
 | `Path` | `/` |
 | `Max-Age` | `28800` |
 
-Verification (`src/server/session.ts`) recomputes the HMAC, compares signatures in constant time, checks expiry, then resolves the user from the store and confirms `status === "ACTIVE"`. Role permissions are re-derived from `ROLE_DEFINITIONS` on every request, so a role change takes effect on the next request without a new token.
+Verification (`src/server/session.ts`) recomputes the HMAC, compares signatures in constant time, checks expiry, then resolves the user from the store and confirms `status === "ACTIVE"`. Effective permissions are re-derived from the store's role definitions plus active grants on every request, so a role or grant change takes effect on the next request without a new token.
 
 No authentication material is written to `localStorage` or `sessionStorage`. Redux holds the session user in memory only; the source of truth is the cookie plus the server-side lookup.
 
@@ -53,24 +53,35 @@ No authentication material is written to `localStorage` or `sessionStorage`. Red
 
 Read endpoints enforce view permissions too (`leads:view`, `applications:view`, `customers:view`), and global search filters result groups by the caller's permissions.
 
-## 5. Roles & permissions
+## 5. Roles, grants and permissions
 
-Permission codes live in `src/lib/rbac.ts`; the UI and servers share the same definitions.
+Authorization is a hybrid model: **role permissions**, **direct user grants** (allow/deny, scoped, temporary, delegable) and **record-level access**. The full model, evaluation order, delegation rules and API contracts are documented in [access-control.md](access-control.md).
 
-| Role | Permissions |
-| --- | --- |
-| **Super Admin** | All 27 permissions |
-| **Admin** | All 27 permissions |
-| **Branch Manager** | dashboard; leads view/manage/assign; applications view/manage; credit view; sanctions view/decide; disbursements view/approve; collections view/manage; tasks view/manage; authorizations view/approve; customers view; users view; reports view/export; audit view; operations view |
-| **Loan Officer** | dashboard; leads view/manage; applications view/manage; sanctions view; disbursements view; tasks view/manage; customers view; reports view |
-| **Credit Officer** | dashboard; leads view; applications view; credit view/decide; sanctions view; tasks view/manage; customers view; reports view |
-| **Collection Officer** | dashboard; collections view/manage; tasks view/manage; customers view; reports view |
+Permission codes live in `src/lib/rbac.ts`; the UI and servers share the same definitions. Role definitions are seeded there but resolved from the store, so custom roles and edited permission sets apply immediately. Pages never branch on a role name — they request permission codes.
+
+| Role | Rank | Permissions (summary) |
+| --- | --- | --- |
+| **Super Admin** | 100 | All 31 permissions (protected identity) |
+| **Admin** | 90 | All operational permissions + `access:view`, `access:manage`, `access:delegate`, `users:view`, `users:manage` |
+| **Branch Manager** | 60 | Branch pipeline, sanctions, disbursements approval, collections, tasks, authorizations, users view, reports/export, audit |
+| **Team Leader** | 55 | Sourcing pod: leads, applications, tasks, view-only credit-adjacent modules |
+| **Credit Manager** | 55 | Credit decisions, sanctions, reports/export |
+| **Collection Manager** | 55 | Collections management, authorizations approval, reports/export |
+| **Senior Loan Officer** | 40 | Leads/applications with assignment, tasks |
+| **Loan Officer** | 35 | Leads/applications, tasks, view-only downstream |
+| **Credit Officer** | 35 | Credit view/decide, tasks |
+| **Accounts Officer** | 35 | Disbursement processing, reports/export |
+| **Collection Officer** | 30 | Collections, tasks |
+| **MIS Executive** | 30 | Reporting and exports |
+| **Junior Loan Officer** | 25 | Application filing under supervision |
+| **Custom roles** | configurable | Created at `/access-control` with any permission subset |
 
 Notable separations:
 
 - Only credit roles can record credit decisions (`credit:decide`).
 - Disbursement **processing** (`disbursements:process`) and **approval** (`disbursements:approve`) are separate; the API picks the permission from the action.
 - Only approver roles can decide authorizations (`authorizations:approve`).
+- Administrative authority (`access:manage`, `access:delegate`, `roles:manage`, `users:manage`) can only be delegated by the protected Super Admin.
 - Customer 360 is readable by every operational role (`customers:view`) but write operations do not exist on the customer master.
 
 The full permission list:
@@ -90,14 +101,16 @@ users:view, users:manage
 reports:view, reports:export
 audit:view
 operations:view, operations:manage
+access:view, access:manage, access:delegate
+roles:manage
 ```
 
-## 6. Branch scope
+## 6. Branch scope and record access
 
 `buildScope(user)` returns:
 
 - Global roles (`SUPER_ADMIN`, `ADMIN`) → `{ branchIds: null, isGlobal: true }`.
-- All other roles → `{ branchIds: [user.branchId], isGlobal: false }`.
+- All other roles → the user's `branchIds` set (one or more branches) with `isGlobal: false`.
 
 Rules:
 
@@ -105,8 +118,10 @@ Rules:
 - Detail reads and mutations call `assertBranchScope(scope, record.branchId)`; out-of-scope records return `403 OUT_OF_SCOPE`.
 - Filter options (branches, owners, credit officers) are also scoped, so a branch user never sees another branch in a dropdown.
 - New records inherit the actor's branch unless the actor is global.
+- `recordAccess: "ASSIGNED"` narrows a user to records they own or are assigned to; `RECORD`/`BRANCH`/`DEPARTMENT` `ALLOW` grants can widen that, and `DENY` always wins.
+- Record visibility is enforced for lists, details, mutations, dashboards, shell badges, search, reports and CSV exports.
 
-Verified behavior: a Pune Branch Manager sees only Pune customers in the list and gets `403` for a Mumbai customer page and API.
+Verified behavior: a Pune Branch Manager sees only Pune customers in the list and gets `403` for a Mumbai customer page and API; a Junior Loan Officer with `ASSIGNED` access and a single record grant sees only that application, and a global `DENY` immediately removes it.
 
 ## 7. Client error handling
 

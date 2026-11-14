@@ -11,7 +11,7 @@ import { formatDate, formatDateTime, formatINR, formatNumber, formatPercent } fr
 import { REPORT_CATALOG, type ReportKey } from "@/services/reports";
 import { getStore } from "./store";
 import { sortBy } from "./query";
-import { inScope } from "./access";
+import { canViewRecord, inScope } from "./access";
 
 const DAY = 86_400_000;
 
@@ -164,7 +164,12 @@ export function getReport(key: ReportKey, scope: Scope, filters: ReportFilters =
 
   if (key === "leads") {
     const leads = sortBy(
-      store.leads.filter((lead) => inBranch(lead.branchId) && within(lead.createdAt, fromTime, toTime)),
+      store.leads.filter(
+        (lead) =>
+          inBranch(lead.branchId) &&
+          within(lead.createdAt, fromTime, toTime) &&
+          canViewRecord(scope.user, "LEAD", lead.id, "leads:view", lead.branchId, lead.ownerId),
+      ),
       (lead) => new Date(lead.createdAt).getTime(),
       "desc",
     );
@@ -216,7 +221,8 @@ export function getReport(key: ReportKey, scope: Scope, filters: ReportFilters =
         (app) =>
           inBranch(app.branchId) &&
           (!product || app.product === product) &&
-          within(app.createdAt, fromTime, toTime),
+          within(app.createdAt, fromTime, toTime) &&
+          canViewRecord(scope.user, "APPLICATION", app.id, "applications:view", app.branchId, app.ownerId),
       ),
       (app) => new Date(app.createdAt).getTime(),
       "desc",
@@ -273,7 +279,8 @@ export function getReport(key: ReportKey, scope: Scope, filters: ReportFilters =
           inBranch(app.branchId) &&
           (!product || app.product === product) &&
           Boolean(app.creditDecision) &&
-          within(app.creditDecision?.decidedAt, fromTime, toTime),
+          within(app.creditDecision?.decidedAt, fromTime, toTime) &&
+          canViewRecord(scope.user, "APPLICATION", app.id, "credit:view", app.branchId, app.ownerId),
       ),
       (app) => new Date(app.creditDecision?.decidedAt ?? app.createdAt).getTime(),
       "desc",
@@ -336,7 +343,8 @@ export function getReport(key: ReportKey, scope: Scope, filters: ReportFilters =
         if (!inBranch(sanction.branchId)) return false;
         const app = appById.get(sanction.applicationId);
         if (product && app?.product !== product) return false;
-        return within(sanction.decidedAt ?? sanction.requestedAt, fromTime, toTime);
+        if (within(sanction.decidedAt ?? sanction.requestedAt, fromTime, toTime) === false) return false;
+        return canViewRecord(scope.user, "SANCTION", sanction.id, "sanctions:view", sanction.branchId, app?.ownerId);
       }),
       (sanction) => new Date(sanction.decidedAt ?? sanction.requestedAt).getTime(),
       "desc",
@@ -398,8 +406,17 @@ export function getReport(key: ReportKey, scope: Scope, filters: ReportFilters =
     const disbursements = sortBy(
       store.disbursements.filter((disbursement) => {
         if (!inBranch(disbursement.branchId)) return false;
-        if (product && appById.get(disbursement.applicationId)?.product !== product) return false;
-        return within(disbursement.processedAt ?? disbursement.requestedAt, fromTime, toTime);
+        const app = appById.get(disbursement.applicationId);
+        if (product && app?.product !== product) return false;
+        if (within(disbursement.processedAt ?? disbursement.requestedAt, fromTime, toTime) === false) return false;
+        return canViewRecord(
+          scope.user,
+          "DISBURSEMENT",
+          disbursement.id,
+          "disbursements:view",
+          disbursement.branchId,
+          app?.ownerId,
+        );
       }),
       (disbursement) => new Date(disbursement.processedAt ?? disbursement.requestedAt).getTime(),
       "desc",
@@ -457,7 +474,15 @@ export function getReport(key: ReportKey, scope: Scope, filters: ReportFilters =
         const loan = loanById.get(collectionCase.loanAccountId);
         const app = loan ? appById.get(loan.applicationId) : undefined;
         if (product && app?.product !== product) return false;
-        return within(collectionCase.createdAt, fromTime, toTime);
+        if (within(collectionCase.createdAt, fromTime, toTime) === false) return false;
+        return canViewRecord(
+          scope.user,
+          "COLLECTION",
+          collectionCase.id,
+          "collections:view",
+          collectionCase.branchId,
+          collectionCase.assignedTo,
+        );
       }),
       (collectionCase) => collectionCase.daysPastDue,
       "desc",
@@ -535,30 +560,51 @@ export function getReport(key: ReportKey, scope: Scope, filters: ReportFilters =
   );
 
   const leadsInRange = store.leads.filter(
-    (lead) => scopedBranchIds.has(lead.branchId) && within(lead.createdAt, fromTime, toTime),
+    (lead) =>
+      scopedBranchIds.has(lead.branchId) &&
+      within(lead.createdAt, fromTime, toTime) &&
+      canViewRecord(scope.user, "LEAD", lead.id, "leads:view", lead.branchId, lead.ownerId),
   );
   const appsInRange = store.applications.filter(
-    (app) => scopedBranchIds.has(app.branchId) && within(app.createdAt, fromTime, toTime),
+    (app) =>
+      scopedBranchIds.has(app.branchId) &&
+      within(app.createdAt, fromTime, toTime) &&
+      canViewRecord(scope.user, "APPLICATION", app.id, "applications:view", app.branchId, app.ownerId),
   );
   const completedDisbursements = store.disbursements.filter(
     (disbursement) =>
       scopedBranchIds.has(disbursement.branchId) &&
       disbursement.status === "COMPLETED" &&
-      within(disbursement.processedAt, fromTime, toTime),
+      within(disbursement.processedAt, fromTime, toTime) &&
+      canViewRecord(
+        scope.user,
+        "DISBURSEMENT",
+        disbursement.id,
+        "disbursements:view",
+        disbursement.branchId,
+        appById.get(disbursement.applicationId)?.ownerId,
+      ),
   );
   const collectionsByLoan = new Map(store.collectionCases.map((c) => [c.loanAccountId, c.assignedTo]));
-  const collectedInRange = store.repayments.filter(
-    (repayment) =>
-      repayment.status === "PAID" &&
-      within(repayment.paidDate, fromTime, toTime) &&
-      scopedBranchIds.has(loanById.get(repayment.loanAccountId)?.branchId ?? ""),
-  );
+  const collectedInRange = store.repayments.filter((repayment) => {
+    if (repayment.status !== "PAID" || within(repayment.paidDate, fromTime, toTime) === false) return false;
+    const loan = loanById.get(repayment.loanAccountId);
+    if (!loan || !scopedBranchIds.has(loan.branchId)) return false;
+    return canViewRecord(scope.user, "LOAN", loan.id, "collections:view", loan.branchId);
+  });
   const tasksInRange = store.tasks.filter(
-    (task) => scopedBranchIds.has(task.branchId) && task.status === "COMPLETED" && within(task.completedAt, fromTime, toTime),
+    (task) =>
+      scopedBranchIds.has(task.branchId) &&
+      task.status === "COMPLETED" &&
+      within(task.completedAt, fromTime, toTime) &&
+      canViewRecord(scope.user, "TASK", task.id, "tasks:view", task.branchId, task.assigneeId),
   );
   const decisionsInRange = store.applications.filter(
     (app) =>
-      scopedBranchIds.has(app.branchId) && Boolean(app.creditDecision) && within(app.creditDecision?.decidedAt, fromTime, toTime),
+      scopedBranchIds.has(app.branchId) &&
+      Boolean(app.creditDecision) &&
+      within(app.creditDecision?.decidedAt, fromTime, toTime) &&
+      canViewRecord(scope.user, "APPLICATION", app.id, "credit:view", app.branchId, app.ownerId),
   );
 
   const rows: ReportRow[] = staff.map((user) => ({

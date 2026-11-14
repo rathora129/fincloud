@@ -4,8 +4,9 @@ import { Check, Minus, ScrollText, ShieldCheck, UserCheck, UserCog, UserX } from
 import { getSessionUser } from "@/server/session";
 import { buildScope } from "@/server/access";
 import { listUsers } from "@/server/users";
-import { can, ROLE_CODES, ROLE_DEFINITIONS } from "@/lib/rbac";
-import type { Permission, RoleCode } from "@/lib/types";
+import { getStore } from "@/server/store";
+import { can } from "@/lib/rbac";
+import type { Permission, RoleDefinition } from "@/lib/types";
 import { formatNumber } from "@/lib/utils";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatCard } from "@/components/ui/stat-card";
@@ -49,11 +50,14 @@ export default async function UsersPage({
   const params = await searchParams;
   const value = (key: string) => (typeof params[key] === "string" ? (params[key] as string) : undefined);
 
+  const store = getStore();
+  const roles = store.roles.slice().sort((a, b) => b.rank - a.rank);
+
   const roleParam = value("role");
   const statusParam = value("status");
   const filters = {
     q: value("q"),
-    role: ROLE_CODES.includes(roleParam as RoleCode) ? (roleParam as RoleCode) : "",
+    role: roles.some((role) => role.code === roleParam) ? (roleParam as string) : "",
     status: statusParam === "ACTIVE" || statusParam === "INACTIVE" ? statusParam : "",
     branchId: value("branch"),
   } as const;
@@ -61,7 +65,7 @@ export default async function UsersPage({
   const scope = buildScope(user);
   const directory = listUsers(scope, filters);
   const canManage = can(user, "users:manage");
-  const canAssignSuperAdmin = user.role === "SUPER_ADMIN";
+  const canAssignSuperAdmin = user.isSuperAdmin;
 
   return (
     <div className="space-y-5">
@@ -111,7 +115,7 @@ export default async function UsersPage({
         />
         <StatCard
           label="Roles configured"
-          value={formatNumber(ROLE_CODES.length)}
+          value={formatNumber(roles.length)}
           hint={canManage ? "You can assign roles" : "Read-only for your role"}
           icon={<ShieldCheck className="h-4 w-4" />}
           accent="sky"
@@ -126,40 +130,48 @@ export default async function UsersPage({
         canAssignSuperAdmin={canAssignSuperAdmin}
         currentUserId={user.id}
         isGlobal={scope.isGlobal}
+        protectedSuperAdminId={store.security.protectedSuperAdminId}
+        roles={roles.map((role) => ({
+          code: role.code,
+          name: role.name,
+          rank: role.rank,
+          isSystem: role.isSystem,
+          isGlobal: role.isGlobal,
+        }))}
       />
 
       <Card>
         <CardHeader
           title="Role & permission matrix"
-          description="Derived from ROLE_DEFINITIONS. Server-side checks remain authoritative — this matrix is explanatory only."
+          description="Derived from the store-configured role catalogue. Server-side checks remain authoritative — this matrix is explanatory only."
           action={
             <span className="rounded-md bg-ink-100 px-2 py-1 text-[10px] font-medium text-ink-600">
-              {ROLE_CODES.length} roles · {PERMISSION_GROUPS.reduce((acc, group) => acc + group.permissions.length, 0)} permissions
+              {roles.length} roles · {PERMISSION_GROUPS.reduce((acc, group) => acc + group.permissions.length, 0)} permissions
             </span>
           }
         />
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] border-collapse text-left text-[11.5px]">
+          <table className="w-full min-w-[1100px] border-collapse text-left text-[11.5px]">
             <thead>
               <tr className="border-b border-ink-100 bg-ink-50/70">
                 <th scope="col" className="sticky left-0 z-10 bg-ink-50/95 px-4 py-2.5 text-[10px] font-semibold uppercase tracking-[0.06em] text-ink-500">
                   Permission
                 </th>
-                {ROLE_CODES.map((role) => (
+                {roles.map((role) => (
                   <th
-                    key={role}
+                    key={role.code}
                     scope="col"
-                    className="whitespace-nowrap px-3 py-2.5 text-center text-[10px] font-semibold uppercase tracking-[0.06em] text-ink-500"
-                    title={ROLE_DEFINITIONS[role].description}
+                    className="whitespace-nowrap px-2.5 py-2.5 text-center text-[10px] font-semibold uppercase tracking-[0.06em] text-ink-500"
+                    title={role.description}
                   >
-                    {ROLE_DEFINITIONS[role].shortLabel}
+                    {role.shortLabel}
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {PERMISSION_GROUPS.map((group) => (
-                <RoleMatrixGroup key={group.label} group={group} />
+                <RoleMatrixGroup key={group.label} group={group} roles={roles} />
               ))}
             </tbody>
           </table>
@@ -175,12 +187,18 @@ export default async function UsersPage({
   );
 }
 
-function RoleMatrixGroup({ group }: { group: { label: string; permissions: Permission[] } }) {
+function RoleMatrixGroup({
+  group,
+  roles,
+}: {
+  group: { label: string; permissions: Permission[] };
+  roles: RoleDefinition[];
+}) {
   return (
     <>
       <tr className="border-b border-ink-100 bg-ink-50/40">
         <td
-          colSpan={ROLE_CODES.length + 1}
+          colSpan={roles.length + 1}
           className="sticky left-0 z-10 bg-ink-50/95 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-ink-500"
         >
           {group.label}
@@ -191,10 +209,10 @@ function RoleMatrixGroup({ group }: { group: { label: string; permissions: Permi
           <td className="sticky left-0 z-10 bg-white px-4 py-1.5">
             <code className="text-[11px] font-medium text-ink-700">{permission}</code>
           </td>
-          {ROLE_CODES.map((role) => {
-            const allowed = ROLE_DEFINITIONS[role].permissions.includes(permission);
+          {roles.map((role) => {
+            const allowed = role.permissions.includes(permission);
             return (
-              <td key={role} className="px-3 py-1.5 text-center">
+              <td key={role.code} className="px-2.5 py-1.5 text-center">
                 {allowed ? (
                   <Check className="mx-auto h-3.5 w-3.5 text-brand-600" aria-label="Allowed" />
                 ) : (

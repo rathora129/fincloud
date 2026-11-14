@@ -39,6 +39,7 @@ flowchart LR
 | Pages | `src/app/(app)/**/page.tsx`, `src/app/login` | Permission gate, data assembly, layout, tab routing via search params |
 | Route Handlers | `src/app/api/**/route.ts` | HTTP boundary: zod validation, `requireSession`, `assertPermission`, `assertBranchScope`, `errorResponse` |
 | Domain modules | `src/server/*.ts` | Business rules, state machines, scoping, aggregation, audit writes |
+| Permission engine | `src/server/permissions.ts`, `src/server/access-control.ts` | Effective permission evaluation, record visibility, grants, delegation, role administration, permission audit |
 | Store | `src/server/store.ts`, `src/server/seed.ts` | Deterministic synthetic dataset in `globalThis`, id/ref sequencing, audit append |
 | Validation | `src/lib/validation/*.ts` | Zod schemas shared by handlers and client forms |
 | Client services | `src/services/*.ts` | Typed `getJson` / `postJson` / `patchJson` wrappers over the Axios singleton |
@@ -121,7 +122,9 @@ The seed is demo tooling, not a migration. There is no database schema to alter.
 
 - HttpOnly, SameSite=Lax session cookie; `Secure` in production; 8-hour TTL; no tokens in `localStorage` or `sessionStorage`.
 - HMAC-SHA256 signed token; constant-time signature comparison; scrypt password hashes with per-deployment salt in the demo seed.
-- Server-side RBAC and branch scoping on every read and mutation; `401`/`403` handled centrally on the client.
+- Server-side authorization in one engine: `src/server/permissions.ts` evaluates protected Super Admin bypass, role permissions, direct allow/deny grants, scope, expiry and record visibility; domain modules call `assertRecordPermission` / `canViewRecord` before touching data.
+- Every read and mutation is scoped server-side; record IDs are validated for ownership/access (no IDOR), and exports reuse the same filtered datasets.
+- Role definitions, grants, delegation and permission audit history are managed at `/access-control`; see [access-control.md](access-control.md) for the model and the proposed production schema (not yet applied).
 - Zod validation at every API boundary; safe JSON error envelopes; no stack traces returned.
 - Security headers (`nosniff`, `DENY` framing, referrer policy, permissions policy) in `next.config.ts`.
 - Audit trail for mutations and exports.

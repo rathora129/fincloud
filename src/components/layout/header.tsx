@@ -21,7 +21,6 @@ import {
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { markAllRead, markRead, setMobileNav, setSearchOpen, setUser, toggleSidebar } from "@/store";
 import { ROUTE_TITLES, navItemForPath } from "@/lib/navigation";
-import { ROLE_LABELS } from "@/lib/labels";
 import { cn, formatRelative, initials } from "@/lib/utils";
 import { api, patchJson } from "@/lib/api";
 import { useToast } from "@/components/ui/toast";
@@ -209,7 +208,7 @@ export function Header({ user }: { user: SessionUser }) {
               <Avatar name={user.name} color={user.avatarColor} size="sm" />
               <span className="hidden text-left leading-tight md:block">
                 <span className="block max-w-[9rem] truncate text-[11.5px] font-semibold text-ink-800">{user.name}</span>
-                <span className="block text-[9.5px] text-ink-400">{ROLE_LABELS[user.role] ?? user.role}</span>
+                <span className="block text-[9.5px] text-ink-400">{user.roleName}</span>
               </span>
               <ChevronDown className="hidden h-3.5 w-3.5 text-ink-400 sm:block" />
             </button>
@@ -230,7 +229,7 @@ export function Header({ user }: { user: SessionUser }) {
             </div>
             <div className="mt-2.5 flex flex-wrap gap-1">
               <span className="rounded bg-brand-50 px-1.5 py-0.5 text-[9.5px] font-medium text-brand-700">
-                {ROLE_LABELS[user.role] ?? user.role}
+                {user.roleName}
               </span>
               <span className="rounded bg-ink-100 px-1.5 py-0.5 text-[9.5px] font-medium text-ink-600">
                 {user.branchName}

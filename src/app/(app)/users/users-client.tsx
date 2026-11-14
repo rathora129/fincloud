@@ -8,7 +8,6 @@ import { z } from "zod";
 import type { ColumnDef } from "@tanstack/react-table";
 import { KeyRound, Pencil, Plus, Power, Search, ShieldCheck, UserPlus } from "lucide-react";
 import type { RoleCode } from "@/lib/types";
-import { ROLE_LABELS } from "@/lib/labels";
 import { cn, formatDate, formatRelative } from "@/lib/utils";
 import { errorMessage } from "@/lib/api";
 import { createUser, setUserStatus, updateUser, type UserDto, type UserFormInput } from "@/services/users";
@@ -21,15 +20,6 @@ import { DataTable } from "@/components/ui/data-table";
 import { InlineNote } from "@/components/ui/states";
 import { useToast } from "@/components/ui/toast";
 
-const ROLE_OPTIONS: RoleCode[] = [
-  "SUPER_ADMIN",
-  "ADMIN",
-  "BRANCH_MANAGER",
-  "LOAN_OFFICER",
-  "CREDIT_OFFICER",
-  "COLLECTION_OFFICER",
-];
-
 const formSchema = z.object({
   name: z.string().trim().min(2, "Enter the full name (at least 2 characters).").max(80, "Name is too long."),
   email: z.string().trim().toLowerCase().email("Enter a valid email address."),
@@ -37,7 +27,7 @@ const formSchema = z.object({
     .string()
     .trim()
     .regex(/^\+?[0-9][0-9\s-]{8,16}$/, "Enter a valid phone number."),
-  role: z.enum(["SUPER_ADMIN", "ADMIN", "BRANCH_MANAGER", "LOAN_OFFICER", "CREDIT_OFFICER", "COLLECTION_OFFICER"]),
+  role: z.string().trim().min(1, "Select a role."),
   designation: z.string().trim().min(2, "Enter a designation.").max(60, "Designation is too long."),
   branchId: z.string().min(1, "Select a branch."),
 });
@@ -55,6 +45,14 @@ const rolePill: Record<string, string> = {
   COLLECTION_OFFICER: "bg-rose-50 text-rose-700 ring-rose-200",
 };
 
+type RoleOption = {
+  code: RoleCode;
+  name: string;
+  rank: number;
+  isSystem: boolean;
+  isGlobal: boolean;
+};
+
 export function UsersClient({
   items,
   branches,
@@ -63,6 +61,8 @@ export function UsersClient({
   canAssignSuperAdmin,
   currentUserId,
   isGlobal,
+  roles,
+  protectedSuperAdminId,
 }: {
   items: UserDto[];
   branches: { id: string; name: string }[];
@@ -71,6 +71,8 @@ export function UsersClient({
   canAssignSuperAdmin: boolean;
   currentUserId: string;
   isGlobal: boolean;
+  roles: RoleOption[];
+  protectedSuperAdminId: string;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -101,9 +103,10 @@ export function UsersClient({
   };
 
   const roleOptions = useMemo(
-    () => ROLE_OPTIONS.filter((role) => role !== "SUPER_ADMIN" || canAssignSuperAdmin),
-    [canAssignSuperAdmin],
+    () => roles.filter((role) => role.code !== "SUPER_ADMIN" || canAssignSuperAdmin),
+    [roles, canAssignSuperAdmin],
   );
+  const roleName = (code: string) => roles.find((role) => role.code === code)?.name ?? code.replaceAll("_", " ");
 
   const submitForm = async (payload: FormValues, target: EditableUser) => {
     setSubmitting(true);
@@ -178,7 +181,7 @@ export function UsersClient({
       {
         id: "role",
         header: "Role",
-        accessorFn: (row) => ROLE_LABELS[row.role] ?? row.role,
+        accessorFn: (row) => roleName(row.role),
         cell: ({ row }) => (
           <span
             className={cn(
@@ -186,7 +189,7 @@ export function UsersClient({
               rolePill[row.original.role] ?? "bg-ink-100 text-ink-700 ring-ink-200",
             )}
           >
-            {ROLE_LABELS[row.original.role] ?? row.original.role}
+            {roleName(row.original.role)}
           </span>
         ),
       },
@@ -228,6 +231,7 @@ export function UsersClient({
         enableSorting: false,
         cell: ({ row }) => {
           const target = row.original;
+          const protectedIdentity = target.id === protectedSuperAdminId;
           const protectSuperAdmin = target.role === "SUPER_ADMIN" && !canAssignSuperAdmin;
           const selfDeactivate = target.isSelf && target.status === "ACTIVE";
           return (
@@ -236,13 +240,15 @@ export function UsersClient({
                 variant="ghost"
                 size="icon"
                 className="h-7 w-7"
-                disabled={!canManage || protectSuperAdmin}
+                disabled={!canManage || protectSuperAdmin || protectedIdentity}
                 title={
                   !canManage
                     ? "You do not have permission to edit users"
-                    : protectSuperAdmin
-                      ? "Only a Super Admin can modify Super Admin accounts"
-                      : "Edit user"
+                    : protectedIdentity
+                      ? "The protected Super Admin identity is locked"
+                      : protectSuperAdmin
+                        ? "Only a Super Admin can modify Super Admin accounts"
+                        : "Edit user"
                 }
                 onClick={() => {
                   setEditing(target);
@@ -256,15 +262,17 @@ export function UsersClient({
                 variant="ghost"
                 size="icon"
                 className={cn("h-7 w-7", target.status === "ACTIVE" ? "text-rose-600 hover:bg-rose-50" : "text-brand-700 hover:bg-brand-50")}
-                disabled={!canManage || protectSuperAdmin || selfDeactivate}
+                disabled={!canManage || protectSuperAdmin || protectedIdentity || selfDeactivate}
                 title={
                   selfDeactivate
                     ? "You cannot deactivate your own account"
-                    : protectSuperAdmin
-                      ? "Only a Super Admin can modify Super Admin accounts"
-                      : target.status === "ACTIVE"
-                        ? "Deactivate user"
-                        : "Activate user"
+                    : protectedIdentity
+                      ? "The protected Super Admin identity is locked"
+                      : protectSuperAdmin
+                        ? "Only a Super Admin can modify Super Admin accounts"
+                        : target.status === "ACTIVE"
+                          ? "Deactivate user"
+                          : "Activate user"
                 }
                 onClick={() => setStatusConfirm(target)}
                 aria-label={target.status === "ACTIVE" ? `Deactivate ${target.name}` : `Activate ${target.name}`}
@@ -276,7 +284,7 @@ export function UsersClient({
         },
       },
     ],
-    [canAssignSuperAdmin, canManage],
+    [canAssignSuperAdmin, canManage, protectedSuperAdminId, roles],
   );
 
   return (
@@ -308,9 +316,9 @@ export function UsersClient({
             className="h-9 min-w-[9rem] text-[11.5px]"
           >
             <option value="">All roles</option>
-            {ROLE_OPTIONS.map((role) => (
-              <option key={role} value={role}>
-                {ROLE_LABELS[role] ?? role}
+            {roles.map((role) => (
+              <option key={role.code} value={role.code}>
+                {role.name}
               </option>
             ))}
           </Select>
@@ -414,11 +422,11 @@ export function UsersClient({
         title="Confirm role assignment"
         description={
           roleConfirm
-            ? `Assign the ${ROLE_LABELS[roleConfirm.next.role] ?? roleConfirm.next.role} role to ${
+            ? `Assign the ${roleName(roleConfirm.next.role)} role to ${
                 roleConfirm.next.name
               }? This changes their permissions immediately${
                 roleConfirm.previousRole
-                  ? ` (previously ${ROLE_LABELS[roleConfirm.previousRole] ?? roleConfirm.previousRole})`
+                  ? ` (previously ${roleName(roleConfirm.previousRole)})`
                   : ""
               }.`
             : ""
@@ -459,7 +467,7 @@ function UserFormModal({
   open: boolean;
   editing: EditableUser;
   branches: { id: string; name: string }[];
-  roleOptions: RoleCode[];
+  roleOptions: RoleOption[];
   submitting: boolean;
   onClose: () => void;
   onSubmit: (values: FormValues) => void;
@@ -469,11 +477,11 @@ function UserFormModal({
       name: editing?.name ?? "",
       email: editing?.email ?? "",
       phone: editing?.phone ?? "",
-      role: (editing?.role ?? "LOAN_OFFICER") as RoleCode,
+      role: editing?.role ?? roleOptions[0]?.code ?? "LOAN_OFFICER",
       designation: editing?.designation ?? "",
       branchId: editing?.branchId ?? branches[0]?.id ?? "",
     }),
-    [editing, branches],
+    [editing, branches, roleOptions],
   );
 
   return (
@@ -519,7 +527,7 @@ function UserForm({
 }: {
   defaultValues: FormValues;
   branches: { id: string; name: string }[];
-  roleOptions: RoleCode[];
+  roleOptions: RoleOption[];
   onSubmit: (values: FormValues) => void;
   submitting: boolean;
 }) {
@@ -547,8 +555,8 @@ function UserForm({
         <Field label="Role" htmlFor="user-role" required error={errors.role?.message}>
           <Select id="user-role" {...register("role")}>
             {roleOptions.map((role) => (
-              <option key={role} value={role}>
-                {ROLE_LABELS[role] ?? role}
+              <option key={role.code} value={role.code}>
+                {role.name}
               </option>
             ))}
           </Select>

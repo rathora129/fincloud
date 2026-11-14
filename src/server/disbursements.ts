@@ -10,7 +10,7 @@ import type {
   Scope,
   SessionUser,
 } from "@/lib/types";
-import { ApiError, assertBranchScope, inScope } from "./access";
+import { ApiError, assertBranchScope, assertRecordPermission, canViewRecord, inScope } from "./access";
 import { appendAudit, getStore, makeId, nextSequence } from "./store";
 import { inDateRange, sortBy } from "./query";
 
@@ -67,8 +67,26 @@ export type DisbursementSummary = {
   rejectedCount: number;
 };
 
+function disbursementOwnerId(disbursement: Disbursement): string | undefined {
+  return getStore().applications.find((application) => application.id === disbursement.applicationId)?.ownerId;
+}
+
+function disbursementVisible(scope: Scope, disbursement: Disbursement): boolean {
+  return (
+    inScope(scope, disbursement.branchId) &&
+    canViewRecord(
+      scope.user,
+      "DISBURSEMENT",
+      disbursement.id,
+      "disbursements:view",
+      disbursement.branchId,
+      disbursementOwnerId(disbursement),
+    )
+  );
+}
+
 function scopedDisbursements(scope: Scope) {
-  return getStore().disbursements.filter((disbursement) => inScope(scope, disbursement.branchId));
+  return getStore().disbursements.filter((disbursement) => disbursementVisible(scope, disbursement));
 }
 
 function matchesFilters(
@@ -202,7 +220,7 @@ export function amortisedEmi(principal: number, annualRate: number, tenureMonths
 export function getDisbursementDetail(scope: Scope, id: string): DisbursementDetail | null {
   const store = getStore();
   const disbursement = store.disbursements.find((item) => item.id === id);
-  if (!disbursement || !inScope(scope, disbursement.branchId)) return null;
+  if (!disbursement || !disbursementVisible(scope, disbursement)) return null;
 
   const sanction = store.sanctions.find((item) => item.id === disbursement.sanctionId) ?? null;
   const application = store.applications.find((item) => item.id === disbursement.applicationId) ?? null;
@@ -300,6 +318,17 @@ export function applyDisbursementAction(
   const disbursement = store.disbursements.find((item) => item.id === id);
   if (!disbursement) throw new ApiError(404, "NOT_FOUND", "Disbursement record not found.");
   assertBranchScope(scope, disbursement.branchId);
+  const actionPermission = ["COMPLETE", "REJECT"].includes(input.action)
+    ? "disbursements:approve"
+    : "disbursements:process";
+  assertRecordPermission(
+    user,
+    "DISBURSEMENT",
+    disbursement.id,
+    actionPermission,
+    disbursement.branchId,
+    disbursementOwnerId(disbursement),
+  );
 
   const now = new Date().toISOString();
   const remarks = (input.remarks ?? "").trim();

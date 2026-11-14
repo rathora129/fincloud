@@ -1,7 +1,7 @@
 import type { Notification, SessionUser } from "@/lib/types";
-import { requireSession, buildScope, inScope } from "./access";
+import { requireSession, buildScope, canViewRecord, inScope } from "./access";
 import { getStore } from "./store";
-import { can } from "@/lib/rbac";
+import { hasPermission } from "./permissions";
 import type { SearchGroup } from "@/lib/types";
 
 export async function getNotifications(): Promise<{ user: SessionUser; items: Notification[] }> {
@@ -38,6 +38,7 @@ export async function searchAll(query: string): Promise<{ groups: SearchGroup[] 
     .filter(
       (l) =>
         inScope(scope, l.branchId) &&
+        canViewRecord(user, "LEAD", l.id, "leads:view", l.branchId, l.ownerId) &&
         [l.ref, l.customerName, l.phone, l.city].some((value) => value.toLowerCase().includes(q)),
     )
     .slice(0, limit)
@@ -50,7 +51,13 @@ export async function searchAll(query: string): Promise<{ groups: SearchGroup[] 
   if (leads.length) groups.push({ label: "Leads", type: "lead", items: leads });
 
   const appIds = new Set(
-    store.applications.filter((a) => inScope(scope, a.branchId)).map((a) => a.id),
+    store.applications
+      .filter(
+        (a) =>
+          inScope(scope, a.branchId) &&
+          canViewRecord(user, "APPLICATION", a.id, "applications:view", a.branchId, a.ownerId),
+      )
+      .map((a) => a.id),
   );
   const applications = store.applications
     .filter(
@@ -73,6 +80,7 @@ export async function searchAll(query: string): Promise<{ groups: SearchGroup[] 
     .filter(
       (c) =>
         inScope(scope, c.branchId) &&
+        canViewRecord(user, "CUSTOMER", c.id, "customers:view", c.branchId) &&
         [c.name, c.ref, c.phone, c.city, c.panMasked].some((value) => value.toLowerCase().includes(q)),
     )
     .slice(0, limit)
@@ -85,7 +93,12 @@ export async function searchAll(query: string): Promise<{ groups: SearchGroup[] 
   if (customers.length) groups.push({ label: "Customers", type: "customer", items: customers });
 
   const loans = store.loanAccounts
-    .filter((l) => inScope(scope, l.branchId) && [l.ref].some((value) => value.toLowerCase().includes(q)))
+    .filter(
+      (l) =>
+        inScope(scope, l.branchId) &&
+        canViewRecord(user, "LOAN", l.id, "collections:view", l.branchId) &&
+        [l.ref].some((value) => value.toLowerCase().includes(q)),
+    )
     .slice(0, limit)
     .map((l) => ({
       id: l.id,
@@ -99,6 +112,7 @@ export async function searchAll(query: string): Promise<{ groups: SearchGroup[] 
     .filter(
       (t) =>
         inScope(scope, t.branchId) &&
+        canViewRecord(user, "TASK", t.id, "tasks:view", t.branchId, t.assigneeId) &&
         [t.ref, t.title, t.category].some((value) => value.toLowerCase().includes(q)),
     )
     .slice(0, limit)
@@ -111,13 +125,13 @@ export async function searchAll(query: string): Promise<{ groups: SearchGroup[] 
   if (tasks.length) groups.push({ label: "Tasks", type: "task", items: tasks });
 
   const allowed = new Set<SearchGroup["type"]>();
-  if (can(user, "leads:view")) allowed.add("lead");
-  if (can(user, "applications:view")) allowed.add("application");
-  if (can(user, "customers:view")) {
+  if (hasPermission(user.id, "leads:view")) allowed.add("lead");
+  if (hasPermission(user.id, "applications:view")) allowed.add("application");
+  if (hasPermission(user.id, "customers:view")) {
     allowed.add("customer");
     allowed.add("loan");
   }
-  if (can(user, "tasks:view")) allowed.add("task");
+  if (hasPermission(user.id, "tasks:view")) allowed.add("task");
 
   return { groups: groups.filter((group) => allowed.has(group.type)) };
 }

@@ -14,7 +14,14 @@ import type {
   Store,
   Task,
 } from "@/lib/types";
-import { ApiError, assertBranchScope, buildScope, inScope } from "./access";
+import {
+  ApiError,
+  assertBranchScope,
+  assertRecordPermission,
+  buildScope,
+  canViewRecord,
+  inScope,
+} from "./access";
 import { getStore } from "./store";
 import { matchesText } from "./query";
 import { formatINR } from "@/lib/utils";
@@ -199,7 +206,11 @@ export function getCustomersWorkspace(user: SessionUser, filters: CustomerFilter
   const scope = buildScope(user);
   const tab = filters.tab && TAB_MATCHERS[filters.tab] ? filters.tab : "all";
 
-  const scoped = store.customers.filter((customer) => inScope(scope, customer.branchId));
+  const scoped = store.customers.filter(
+    (customer) =>
+      inScope(scope, customer.branchId) &&
+      canViewRecord(user, "CUSTOMER", customer.id, "customers:view", customer.branchId),
+  );
 
   const counts: CustomerCounts = {
     all: scoped.length,
@@ -245,18 +256,35 @@ export function getCustomerDetail(user: SessionUser, customerId: string): Custom
   const customer = store.customers.find((item) => item.id === customerId);
   if (!customer) throw new ApiError(404, "CUSTOMER_NOT_FOUND", "Customer not found.");
   assertBranchScope(scope, customer.branchId);
+  assertRecordPermission(user, "CUSTOMER", customer.id, "customers:view", customer.branchId);
 
   const applications = store.applications
-    .filter((application) => application.customerId === customer.id)
+    .filter(
+      (application) =>
+        application.customerId === customer.id &&
+        canViewRecord(user, "APPLICATION", application.id, "applications:view", application.branchId, application.ownerId),
+    )
     .sort((a, b) => timeOf(b.createdAt) - timeOf(a.createdAt));
   const sanctions = store.sanctions
-    .filter((sanction) => sanction.customerId === customer.id)
+    .filter(
+      (sanction) =>
+        sanction.customerId === customer.id &&
+        canViewRecord(user, "SANCTION", sanction.id, "sanctions:view", sanction.branchId),
+    )
     .sort((a, b) => timeOf(b.requestedAt) - timeOf(a.requestedAt));
   const disbursements = store.disbursements
-    .filter((disbursement) => disbursement.customerId === customer.id)
+    .filter(
+      (disbursement) =>
+        disbursement.customerId === customer.id &&
+        canViewRecord(user, "DISBURSEMENT", disbursement.id, "disbursements:view", disbursement.branchId),
+    )
     .sort((a, b) => timeOf(b.requestedAt) - timeOf(a.requestedAt));
   const loans = store.loanAccounts
-    .filter((loan) => loan.customerId === customer.id)
+    .filter(
+      (loan) =>
+        loan.customerId === customer.id &&
+        canViewRecord(user, "LOAN", loan.id, "disbursements:view", loan.branchId),
+    )
     .sort((a, b) => timeOf(b.disbursedAt) - timeOf(a.disbursedAt));
   const repayments = store.repayments
     .filter((repayment) => repayment.customerId === customer.id)

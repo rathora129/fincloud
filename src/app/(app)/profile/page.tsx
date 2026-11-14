@@ -14,9 +14,8 @@ import {
 } from "lucide-react";
 import { getSessionUser } from "@/server/session";
 import { getStore } from "@/server/store";
-import { ROLE_DEFINITIONS, isGlobalRole } from "@/lib/rbac";
 import type { Permission } from "@/lib/types";
-import { ROLE_LABELS, humanize } from "@/lib/labels";
+import { humanize } from "@/lib/labels";
 import { formatDate, formatDateTime, formatRelative } from "@/lib/utils";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardHeader } from "@/components/ui/card";
@@ -59,9 +58,9 @@ export default async function ProfilePage() {
   const store = getStore();
   const record = store.users.find((user) => user.id === sessionUser.id);
   const branch = store.branches.find((item) => item.id === sessionUser.branchId);
-  const roleDefinition = ROLE_DEFINITIONS[sessionUser.role];
-  const groups = groupPermissions(roleDefinition.permissions);
-  const global = isGlobalRole(sessionUser.role);
+  const roleDefinition = store.roles.find((role) => role.code === sessionUser.role);
+  const groups = groupPermissions(sessionUser.permissions);
+  const global = roleDefinition?.isGlobal ?? false;
 
   return (
     <div className="space-y-5">
@@ -84,7 +83,7 @@ export default async function ProfilePage() {
               <div className="flex flex-wrap items-center gap-2">
                 <h2 className="text-lg font-semibold tracking-[-0.01em] text-ink-950">{sessionUser.name}</h2>
                 <span className="rounded-full bg-brand-50 px-2 py-0.5 text-[10.5px] font-medium text-brand-700 ring-1 ring-inset ring-brand-200">
-                  {ROLE_LABELS[sessionUser.role] ?? sessionUser.role}
+                  {sessionUser.roleName}
                 </span>
                 {record ? <StatusBadge status={record.status} /> : null}
               </div>
@@ -184,17 +183,20 @@ export default async function ProfilePage() {
                 <ShieldCheck className="h-4 w-4 text-brand-700" /> Access &amp; permissions
               </span>
             }
-            description={roleDefinition.description}
+            description={
+              roleDefinition?.description ??
+              "Role definition resolved from the access-control service at request time."
+            }
             action={
               <span className="rounded-md bg-brand-50 px-2 py-1 text-[10px] font-medium text-brand-700 ring-1 ring-inset ring-brand-200">
-                {roleDefinition.permissions.length} permissions
+                {sessionUser.permissions.length} effective permissions
               </span>
             }
           />
           <div className="space-y-4 p-5">
             <div className="flex flex-wrap items-center gap-2">
               <span className="inline-flex items-center gap-1.5 rounded-full border border-ink-200 bg-white px-2.5 py-1 text-[10.5px] text-ink-600">
-                <BadgeCheck className="h-3 w-3 text-brand-600" /> Role: {roleDefinition.label}
+                <BadgeCheck className="h-3 w-3 text-brand-600" /> Role: {sessionUser.roleName}
               </span>
               <span className="inline-flex items-center gap-1.5 rounded-full border border-ink-200 bg-white px-2.5 py-1 text-[10.5px] text-ink-600">
                 <MapPin className="h-3 w-3 text-ink-400" /> Scope:{" "}
@@ -229,8 +231,9 @@ export default async function ProfilePage() {
               {global
                 ? "Your role sees records across every branch. Record-level scope checks still run on each API request."
                 : `Your role is restricted to ${branch?.name ?? "your branch"}. Requests touching other branches are rejected with 403 by the server, regardless of UI state.`}{" "}
-              Permissions are resolved from <code className="font-mono">ROLE_DEFINITIONS</code> at request time. To change
-              access, an administrator must update your role under Users &amp; roles.
+              Effective permissions are resolved by the centralized engine at request time from your role, direct grants,
+              temporary grants and explicit restrictions. To change access, an authorized administrator uses the Access
+              Control Center; record-level checks still run on every request.
             </div>
           </div>
         </Card>

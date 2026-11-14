@@ -6,7 +6,7 @@ import type {
   TaskPriority,
   TaskStatus,
 } from "@/lib/types";
-import { ApiError, assertBranchScope, buildScope, inScope } from "./access";
+import { ApiError, assertBranchScope, assertRecordPermission, buildScope, canViewRecord, inScope } from "./access";
 import { appendAudit, getStore, makeId, nextSequence } from "./store";
 
 export const TASK_CATEGORIES: TaskCategory[] = ["CREDIT", "COLLECTION", "FIELD", "LEGAL", "AGENCY", "GRE", "OTHER"];
@@ -127,7 +127,11 @@ export function getTasksOverview(scope: Scope, user: SessionUser): TasksOverview
   const userById = new Map(store.users.map((item) => [item.id, item]));
   const branchById = new Map(store.branches.map((branch) => [branch.id, branch]));
 
-  const scoped = store.tasks.filter((task) => inScope(scope, task.branchId));
+  const scoped = store.tasks.filter(
+    (task) =>
+      inScope(scope, task.branchId) &&
+      canViewRecord(scope.user, "TASK", task.id, "tasks:view", task.branchId, task.assigneeId),
+  );
 
   const rows: TaskRow[] = scoped
     .map((task) => {
@@ -269,6 +273,7 @@ export function updateTask(user: SessionUser, taskId: string, input: UpdateTaskI
   const { store, task } = requireTask(taskId);
   const scope = buildScope(user);
   assertBranchScope(scope, task.branchId);
+  assertRecordPermission(user, "TASK", task.id, "tasks:manage", task.branchId, task.assigneeId);
 
   const changes: string[] = [];
 

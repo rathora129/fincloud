@@ -9,7 +9,15 @@ import type {
   SessionUser,
   VerificationStatus,
 } from "@/lib/types";
-import { ApiError, assertBranchScope, assertPermission, buildScope, inScope } from "./access";
+import {
+  ApiError,
+  assertBranchScope,
+  assertPermission,
+  assertRecordPermission,
+  buildScope,
+  canViewRecord,
+  inScope,
+} from "./access";
 import { appendAudit, getStore, makeId, nextSequence } from "./store";
 import { inDateRange, matchesText, sortBy } from "./query";
 import { PRODUCT_RATES } from "@/lib/lead-flow";
@@ -151,7 +159,9 @@ export function getApplicationsWorkspace(user: SessionUser, filters: Application
 
   const scoped = store.applications.filter(
     (application) =>
-      inScope(scope, application.branchId) && (!filters.ownerId || application.ownerId === filters.ownerId),
+      inScope(scope, application.branchId) &&
+      canViewRecord(user, "APPLICATION", application.id, "applications:view", application.branchId, application.ownerId) &&
+      (!filters.ownerId || application.ownerId === filters.ownerId),
   );
 
   const counts: ApplicationCounts = {
@@ -224,13 +234,27 @@ export function getApplicationsWorkspace(user: SessionUser, filters: Application
   };
 }
 
-function scopeApplication(user: SessionUser, applicationId: string) {
+function scopeApplication(
+  user: SessionUser,
+  applicationId: string,
+  permission: "applications:view" | "applications:manage" | "credit:view" | "credit:decide" = "applications:view",
+) {
   const store = getStore();
   const scope = buildScope(user);
   const application = store.applications.find((item) => item.id === applicationId);
   if (!application) throw new ApiError(404, "APPLICATION_NOT_FOUND", "Application not found.");
   assertBranchScope(scope, application.branchId);
+  assertRecordPermission(user, "APPLICATION", application.id, permission, application.branchId, application.ownerId);
   return { store, scope, application };
+}
+
+export function assertApplicationRecordAccess(
+  user: SessionUser,
+  application: LoanApplication,
+  permission: "applications:view" | "applications:manage" | "credit:view" | "credit:decide" | "sanctions:view" | "disbursements:view",
+) {
+  assertBranchScope(buildScope(user), application.branchId);
+  assertRecordPermission(user, "APPLICATION", application.id, permission, application.branchId, application.ownerId);
 }
 
 export function getApplicationDetail(user: SessionUser, applicationId: string): ApplicationDetailView {
@@ -414,7 +438,7 @@ export function updateApplication(
   patch: Partial<Pick<LoanApplication, "product" | "requestedAmount" | "tenureMonths" | "interestRate" | "purpose" | "ownerId">>,
 ) {
   assertPermission(user, "applications:manage");
-  const { store, scope, application } = scopeApplication(user, applicationId);
+  const { store, scope, application } = scopeApplication(user, applicationId, "applications:manage");
   if (!EDITABLE_STATUSES.includes(application.status)) {
     throw new ApiError(409, "LOCKED_APPLICATION", "This application can no longer be edited after a credit decision.");
   }
@@ -444,7 +468,7 @@ function assertDocsComplete(application: LoanApplication, requireVerified: boole
 
 export function submitApplication(user: SessionUser, applicationId: string) {
   assertPermission(user, "applications:manage");
-  const { store, application } = scopeApplication(user, applicationId);
+  const { store, application } = scopeApplication(user, applicationId, "applications:manage");
   if (application.status !== "NEW") {
     throw new ApiError(409, "INVALID_STAGE", "Only new applications can be submitted for processing.");
   }
@@ -463,7 +487,7 @@ export function updateDocument(
   status: DocumentCheck["status"],
 ) {
   assertPermission(user, "applications:manage");
-  const { store, application } = scopeApplication(user, applicationId);
+  const { store, application } = scopeApplication(user, applicationId, "applications:manage");
   if (!DOC_WORKABLE_STATUSES.includes(application.status)) {
     throw new ApiError(409, "LOCKED_APPLICATION", "Documents cannot be changed after a credit decision.");
   }
@@ -493,7 +517,7 @@ export function updateVerification(
   status: VerificationStatus,
 ) {
   assertPermission(user, "applications:manage");
-  const { store, application } = scopeApplication(user, applicationId);
+  const { store, application } = scopeApplication(user, applicationId, "applications:manage");
   if (!["NEW", "IN_PROCESS"].includes(application.status)) {
     throw new ApiError(409, "LOCKED_APPLICATION", "Verification is locked after the file is recommended.");
   }
@@ -505,7 +529,7 @@ export function updateVerification(
 
 export function recommendApplication(user: SessionUser, applicationId: string, creditOfficerId?: string) {
   assertPermission(user, "applications:manage");
-  const { store, application } = scopeApplication(user, applicationId);
+  const { store, application } = scopeApplication(user, applicationId, "applications:manage");
   if (application.status !== "IN_PROCESS") {
     throw new ApiError(409, "INVALID_STAGE", "Only in-process applications can be recommended to credit.");
   }
@@ -545,7 +569,7 @@ export function recommendApplication(user: SessionUser, applicationId: string, c
 
 export function resubmitApplication(user: SessionUser, applicationId: string) {
   assertPermission(user, "applications:manage");
-  const { store, application } = scopeApplication(user, applicationId);
+  const { store, application } = scopeApplication(user, applicationId, "applications:manage");
   if (application.status !== "SENT_BACK") {
     throw new ApiError(409, "INVALID_STAGE", "Only sent-back applications can be resubmitted.");
   }
