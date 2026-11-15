@@ -16,8 +16,8 @@ A premium, production-oriented **loan management system demonstration** built fo
 | State | Redux Toolkit (session, UI, notifications) |
 | Forms | React Hook Form + Zod 4 |
 | Tables / charts | TanStack Table v8, Chart.js 4 via react-chartjs-2 |
-| Persistence | Deterministic in-memory demo store (seeded, resets on process restart) |
-| Auth | HMAC-signed HttpOnly session cookie (8h), scrypt password hashing |
+| Persistence | Fail-closed adapter selection: in-memory seed in development; refuses to start in production without an explicit adapter (`docs/database-persistence.md`) |
+| Auth | HMAC-signed HttpOnly session cookie (8h, SameSite=Lax, Secure in production), scrypt password hashing, server-side session registry, login rate limiting, CSRF origin guard |
 
 ## Quick start
 
@@ -28,6 +28,17 @@ npm run typecheck  # tsc --noEmit
 npm run build      # production build
 npm start          # serve the production build
 ```
+
+### Regression suites
+
+Both suites drive the running app over HTTP against a real dev/production server and fail non-zero.
+
+```bash
+node scripts/security-regression.mjs http://localhost:3000   # 68 checks
+node scripts/browser-smoke.mjs http://localhost:3000         # 42 checks, needs Chrome
+```
+
+Reports land in `.artifacts/security/results.json` and `.artifacts/browser/results.json`. The browser suite uses the Chrome DevTools Protocol directly (no Playwright/Puppeteer).
 
 ### Demo accounts
 
@@ -84,6 +95,10 @@ public/assets/brand/  official FinCloud logo (local copy, unmodified)
 - [Modules, routes & API map](docs/modules-and-routes.md) — pages, endpoints, services and integration gaps.
 - [Auth & RBAC](docs/auth-and-rbac.md) — session flow, cookie hardening, roles, permissions, branch scope.
 - [Business workflows](docs/workflows.md) — state machines and gates for every lifecycle stage.
+- [Access control](docs/access-control.md) — hybrid RBAC, direct grants, scopes, denial precedence, audit.
+- [Database persistence](docs/database-persistence.md) — current state, fail-closed behaviour and the proposed PostgreSQL model (approval required).
+- [Staging readiness](docs/staging-readiness.md) — configuration contract, preflight, isolation and the deployment gate.
+- [Production-readiness report](docs/production-readiness-report.md) — audit results, open items and known limitations.
 - [Implementation checklist](docs/implementation-checklist.md) — what is complete, what awaits backend integration, and how it was verified.
 
 ## Branding
@@ -92,8 +107,8 @@ The official FinCloud mark is stored at `public/assets/brand/fincloud-logo.png` 
 
 ## Demo limitations
 
-- The store is **in-memory**: mutations survive until the Node process restarts, then the deterministic seed is rebuilt.
-- Document uploads record synthetic file names only; no binary is stored.
+- The store is **in-memory**: mutations survive until the Node process restarts, then the deterministic seed is rebuilt. Production refuses to start on an implicit in-memory store.
+- Uploaded demo documents are synthetic files written to private local storage (`.data/documents`, UUID names, 5 MB cap, content sniffing). They are not real customer identity documents.
 - eSign, bureau checks, SMS/WhatsApp/email, bank transfers and payment gateways are explicitly disabled and labelled DEMO.
 - Customer-level internal notes are derived from lifecycle remarks; there is no free-text note authoring yet.
 - Real password recovery, SSO and MFA are out of scope for the demo.

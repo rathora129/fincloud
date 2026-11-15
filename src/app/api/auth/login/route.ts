@@ -1,7 +1,11 @@
 import { scryptSync, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { getStore, appendAudit } from "@/server/store";
-import { toSessionUser, createSessionToken, SESSION_COOKIE } from "@/server/session";
+import {
+  registerSession,
+  sessionCookieHeader,
+  toSessionUser,
+} from "@/server/session";
 
 const schema = z.object({
   email: z.string().trim().toLowerCase().email("Enter a valid email address."),
@@ -9,9 +13,15 @@ const schema = z.object({
 });
 
 const attempts = new Map<string, { count: number; resetAt: number }>();
+const DUMMY_HASH = scryptSync("fincloud-invalid-password", "fincloud-demo-salt", 64).toString("hex");
 
 function rateLimited(key: string) {
   const now = Date.now();
+  if (attempts.size > 5000) {
+    for (const [entryKey, entry] of attempts) {
+      if (entry.resetAt < now) attempts.delete(entryKey);
+    }
+  }
   const entry = attempts.get(key);
   if (!entry || entry.resetAt < now) {
     attempts.set(key, { count: 1, resetAt: now + 60_000 });
@@ -36,25 +46,19 @@ export async function POST(request: Request) {
     if (rateLimited(`${ip}:${parsed.data.email}`)) {
       return Response.json(
         { error: { code: "RATE_LIMITED", message: "Too many attempts. Please wait a minute and retry." } },
-        { status: 429 },
+        { status: 429, headers: { "Retry-After": "60" } },
       );
     }
 
     const store = getStore();
     const user = store.users.find((u) => u.email.toLowerCase() === parsed.data.email);
 
-    if (!user) {
-      return Response.json(
-        { error: { code: "INVALID_CREDENTIALS", message: "Email or password is incorrect." } },
-        { status: 401 },
-      );
-    }
-
+    // Always run the same scrypt comparison so unknown emails do not leak through timing.
     const provided = Buffer.from(scryptSync(parsed.data.password, "fincloud-demo-salt", 64).toString("hex"));
-    const stored = Buffer.from(user.passwordHash);
-    const valid = provided.length === stored.length && timingSafeEqual(provided, stored);
+    const stored = Buffer.from(user?.passwordHash ?? DUMMY_HASH);
+    const valid = provided.length === stored.length && timingSafeEqual(provided, stored) && Boolean(user);
 
-    if (!valid) {
+    if (!user || !valid) {
       return Response.json(
         { error: { code: "INVALID_CREDENTIALS", message: "Email or password is incorrect." } },
         { status: 401 },
@@ -74,15 +78,14 @@ export async function POST(request: Request) {
     }
 
     user.lastLoginAt = new Date().toISOString();
-    appendAudit(store, user.id, "LOGIN", "User session", user.id, "Signed in to the DEMO workspace");
+    appendAudit(store, user.id, "LOGIN", "User session", user.id, "Signed in to the DEMO workspace", ip);
+    const { token } = registerSession(user.id, {
+      ip,
+      userAgent: request.headers.get("user-agent") ?? "unknown",
+    });
 
     const response = Response.json({ user: sessionUser });
-    response.headers.append(
-      "Set-Cookie",
-      `${SESSION_COOKIE}=${createSessionToken(user.id)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${
-        60 * 60 * 8
-      }${process.env.NODE_ENV === "production" ? "; Secure" : ""}`,
-    );
+    response.headers.append("Set-Cookie", sessionCookieHeader(token));
     return response;
   } catch {
     return Response.json(

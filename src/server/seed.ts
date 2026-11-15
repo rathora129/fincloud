@@ -34,8 +34,6 @@ import { DEFAULT_ROLES } from "@/lib/rbac";
 import { stateForCity } from "@/lib/geo";
 
 export const DEMO_PASSWORD = "Fincloud@2026";
-export const DEMO_SESSION_SECRET =
-  process.env.FINCLOUD_SESSION_SECRET ?? "fincloud-demo-session-secret-2026";
 
 function mulberry32(seed: number) {
   let a = seed;
@@ -274,6 +272,7 @@ function makeDocuments(index: number, complete: boolean): DocumentCheck[] {
       status,
       fileName: status === "PENDING" ? null : `${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${pad(index)}.pdf`,
       uploadedAt: status === "PENDING" ? null : daysAgo(int(1, 30)),
+      fileId: null,
     };
   });
 }
@@ -1070,6 +1069,8 @@ export function buildSeed(): Store {
     roles,
     accessGrants,
     permissionAudits,
+    sessions: [],
+    documentFiles: [],
     security: { protectedSuperAdminId: "usr-001" },
     customers,
     leads,

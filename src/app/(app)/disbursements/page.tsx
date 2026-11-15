@@ -4,7 +4,12 @@ import { BadgeCheck, Banknote, CircleDollarSign, Clock3, Landmark, ShieldAlert }
 import { getSessionUser } from "@/server/session";
 import { buildScope, inScope } from "@/server/access";
 import { getStore } from "@/server/store";
-import { DISBURSEMENT_TABS, getDisbursementQueue, parseDisbursementTab } from "@/server/disbursements";
+import {
+  DISBURSEMENT_TABS,
+  getDisbursementEligibleSanctions,
+  getDisbursementQueue,
+  parseDisbursementTab,
+} from "@/server/disbursements";
 import { can } from "@/lib/rbac";
 import { formatINRCompact, formatNumber } from "@/lib/utils";
 import type { LoanProduct } from "@/lib/types";
@@ -13,6 +18,7 @@ import { StatCard } from "@/components/ui/stat-card";
 import { LinkTabs } from "@/components/ui/tabs";
 import { InlineNote, PermissionDenied } from "@/components/ui/states";
 import { DisbursementFilters } from "./disbursement-filters";
+import { DisbursementCreateDialog } from "./disbursement-create-dialog";
 import { DisbursementTable } from "./disbursement-table";
 
 export const metadata = { title: "Disbursements" };
@@ -42,6 +48,8 @@ export default async function DisbursementsPage({
   const scope = buildScope(user);
   const store = getStore();
   const queue = getDisbursementQueue(scope, tab, filters);
+  const canCreate = can(user, "disbursements:process");
+  const eligibleSanctions = canCreate ? getDisbursementEligibleSanctions(scope) : [];
 
   const branches = store.branches
     .filter((branch) => inScope(scope, branch.id))
@@ -96,6 +104,7 @@ export default async function DisbursementsPage({
         breadcrumbs={[{ label: "Risk & fulfilment" }, { label: "Disbursements" }]}
         actions={
           <>
+            {canCreate ? <DisbursementCreateDialog sanctions={eligibleSanctions} /> : null}
             <Link
               href="/sanctions"
               className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-ink-200 bg-white px-3 text-[11.5px] font-medium text-ink-600 transition hover:border-ink-300 hover:text-ink-900"

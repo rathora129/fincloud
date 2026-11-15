@@ -5,13 +5,14 @@ import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Check, FileCheck2, Lock, PencilLine, Send, ShieldCheck, Undo2, X } from "lucide-react";
+import { Check, Download, Lock, PencilLine, Send, ShieldCheck, Undo2, UploadCloud, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Select, Textarea } from "@/components/ui/input";
-import { ConfirmDialog, Modal } from "@/components/ui/modal";
+import { Modal, ConfirmDialog } from "@/components/ui/modal";
+import { FileUpload } from "@/components/ui/file-upload";
 import { StatusBadge } from "@/components/ui/badge";
 import { useToast } from "@/components/ui/toast";
-import { applicationActionRequest } from "@/services/applications";
+import { applicationActionRequest, documentFileUrl, uploadDocumentFile } from "@/services/applications";
 import { errorMessage } from "@/lib/api";
 import { PRODUCT_LABELS, humanize } from "@/lib/labels";
 import { PRODUCT_RATES } from "@/lib/lead-flow";
@@ -235,6 +236,8 @@ export function DocumentChecklist({
   const router = useRouter();
   const toast = useToast();
   const [busy, setBusy] = useState<string | null>(null);
+  const [uploadFor, setUploadFor] = useState<DocumentCheck | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   const update = async (documentId: string, status: DocumentCheck["status"], label: string) => {
     setBusy(documentId);
@@ -249,61 +252,124 @@ export function DocumentChecklist({
     }
   };
 
+  const closeUpload = () => {
+    setUploadFor(null);
+    setSelectedFile(null);
+  };
+
+  const upload = async () => {
+    if (!uploadFor || !selectedFile) return;
+    setBusy(uploadFor.id);
+    try {
+      await uploadDocumentFile(applicationId, uploadFor.id, selectedFile);
+      toast.success("Document uploaded", `${uploadFor.name} is stored privately and marked uploaded.`);
+      closeUpload();
+      router.refresh();
+    } catch (error) {
+      toast.error("Upload failed", errorMessage(error));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   return (
-    <ul className="divide-y divide-ink-100">
-      {documents.map((document) => (
-        <li key={document.id} className="flex flex-wrap items-start justify-between gap-2 px-5 py-3">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <p className="text-sm font-medium text-ink-800">{document.name}</p>
-              {document.required ? (
-                <span className="rounded bg-ink-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] text-ink-500">
-                  Mandatory
-                </span>
-              ) : null}
-              <StatusBadge status={document.status} dot={false} />
+    <>
+      <ul className="divide-y divide-ink-100">
+        {documents.map((document) => (
+          <li key={document.id} className="flex flex-wrap items-start justify-between gap-2 px-5 py-3">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-sm font-medium text-ink-800">{document.name}</p>
+                {document.required ? (
+                  <span className="rounded bg-ink-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] text-ink-500">
+                    Mandatory
+                  </span>
+                ) : null}
+                <StatusBadge status={document.status} dot={false} />
+              </div>
+              <p className="mt-0.5 text-[11px] text-ink-400">
+                {document.fileId
+                  ? `${document.fileName} · stored privately`
+                  : document.fileName
+                    ? `${document.fileName} · DEMO seed metadata, no binary attached`
+                    : "No file attached"}
+              </p>
             </div>
-            <p className="mt-0.5 text-[11px] text-ink-400">
-              {document.fileName ? `${document.fileName} · demo metadata only` : "No file attached"}
-            </p>
-          </div>
-          {canManage && !locked ? (
             <div className="flex items-center gap-1.5">
-              {document.status === "PENDING" ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  loading={busy === document.id}
-                  onClick={() => update(document.id, "UPLOADED", `${document.name} marked uploaded`)}
+              {document.fileId ? (
+                <a
+                  href={documentFileUrl(applicationId, document.id)}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-ink-200 px-2.5 text-[11.5px] font-medium text-ink-600 transition hover:border-ink-300 hover:text-ink-900"
                 >
-                  <FileCheck2 className="h-3.5 w-3.5" /> Mark uploaded
-                </Button>
+                  <Download className="h-3.5 w-3.5" /> Download
+                </a>
               ) : null}
-              {document.status === "UPLOADED" ? (
+              {canManage && !locked ? (
                 <>
-                  <Button
-                    size="sm"
-                    variant="soft"
-                    loading={busy === document.id}
-                    onClick={() => update(document.id, "VERIFIED", `${document.name} verified`)}
-                  >
-                    <Check className="h-3.5 w-3.5" /> Verify
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    loading={busy === document.id}
-                    onClick={() => update(document.id, "REJECTED", `${document.name} rejected`)}
-                  >
-                    <X className="h-3.5 w-3.5" /> Reject
-                  </Button>
+                  {!document.fileId && document.status !== "VERIFIED" ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      loading={busy === document.id}
+                      onClick={() => {
+                        setUploadFor(document);
+                        setSelectedFile(null);
+                      }}
+                    >
+                      <UploadCloud className="h-3.5 w-3.5" /> Upload
+                    </Button>
+                  ) : null}
+                  {document.status === "UPLOADED" ? (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="soft"
+                        loading={busy === document.id}
+                        onClick={() => update(document.id, "VERIFIED", `${document.name} verified`)}
+                      >
+                        <Check className="h-3.5 w-3.5" /> Verify
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        loading={busy === document.id}
+                        onClick={() => update(document.id, "REJECTED", `${document.name} rejected`)}
+                      >
+                        <X className="h-3.5 w-3.5" /> Reject
+                      </Button>
+                    </>
+                  ) : null}
                 </>
               ) : null}
             </div>
-          ) : null}
-        </li>
-      ))}
-    </ul>
+          </li>
+        ))}
+      </ul>
+
+      <Modal
+        open={uploadFor !== null}
+        onClose={closeUpload}
+        title={`Upload ${uploadFor?.name ?? "document"}`}
+        description="Files are validated server-side, stored outside the public web root, and only downloadable by users with record access."
+        size="sm"
+        footer={
+          <>
+            <Button variant="outline" onClick={closeUpload} disabled={busy !== null}>
+              Cancel
+            </Button>
+            <Button onClick={upload} disabled={!selectedFile} loading={busy !== null && busy === uploadFor?.id}>
+              Upload file
+            </Button>
+          </>
+        }
+      >
+        <FileUpload onFile={setSelectedFile} label="Select a file" />
+        <p className="mt-3 text-[10.5px] leading-relaxed text-ink-400">
+          Accepted: PDF, PNG or JPEG up to 5 MB. The server re-checks the file signature and stores the binary with a
+          generated name. Demo data must remain synthetic.
+        </p>
+      </Modal>
+    </>
   );
 }
 

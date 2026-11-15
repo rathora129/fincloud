@@ -1,4 +1,4 @@
-import { getJson, patchJson, postJson } from "@/lib/api";
+import { getJson, patchJson, postForm, postJson } from "@/lib/api";
 import type { ApplicationActionInput, ApplicationCreateValues } from "@/lib/validation/applications";
 import type {
   ApplicationCounts,
@@ -38,4 +38,27 @@ export function createApplicationRequest(input: ApplicationCreateValues) {
 
 export function applicationActionRequest(id: string, action: ApplicationActionInput) {
   return patchJson<{ ok: boolean }>(`/applications/${id}`, action);
+}
+
+export type DocumentUploadResult = {
+  documentId: string;
+  fileId: string;
+  originalName: string;
+  mime: string;
+  size: number;
+  uploadedAt: string;
+  status: "UPLOADED";
+};
+
+export function uploadDocumentFile(applicationId: string, documentId: string, file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  return postForm<{ item: DocumentUploadResult }>(
+    `/applications/${applicationId}/documents/${documentId}/file`,
+    form,
+  ).then((response) => response.item);
+}
+
+export function documentFileUrl(applicationId: string, documentId: string) {
+  return `/api/applications/${applicationId}/documents/${documentId}/file`;
 }

@@ -10,7 +10,7 @@ const ALLOWED = ["application/pdf", "image/png", "image/jpeg"];
 export function FileUpload({
   onFile,
   label = "Upload document",
-  hint = "PDF, PNG or JPG · up to 5 MB · DEMO stores metadata only",
+  hint = "PDF, PNG or JPG · up to 5 MB · stored privately, never public",
   maxSizeMB = 5,
   className,
 }: {
@@ -52,7 +52,7 @@ export function FileUpload({
         </div>
         <div className="min-w-0 flex-1">
           <p className="truncate text-[13px] font-medium text-ink-900">{file.name}</p>
-          <p className="text-[11px] text-ink-500">{(file.size / 1024).toFixed(0)} KB · selected for demo upload</p>
+          <p className="text-[11px] text-ink-500">{(file.size / 1024).toFixed(0)} KB · ready to upload</p>
         </div>
         <button
           type="button"

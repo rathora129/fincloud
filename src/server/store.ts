@@ -38,6 +38,7 @@ export function appendAudit(
   entityType: string,
   entityId: string,
   summary: string,
+  ip = "system",
 ) {
   store.auditLogs.unshift({
     id: makeId("aud"),
@@ -47,7 +48,7 @@ export function appendAudit(
     entityType,
     entityId,
     summary,
-    ip: "10.24.0.10",
+    ip,
   });
   if (store.auditLogs.length > 500) store.auditLogs.length = 500;
 }

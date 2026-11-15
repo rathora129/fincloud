@@ -58,6 +58,7 @@ Every handler uses `requireSession`, Zod validation, `errorResponse` envelopes a
 | `POST /api/auth/login` | public (rate-limited) | Verify scrypt hash, set HttpOnly session cookie |
 | `POST /api/auth/logout` | session | Clear cookie, audit the event |
 | `GET /api/auth/session` | session | Current user, role, permissions |
+| `GET /api/health` | public | Liveness + storage adapter summary (`503` when misconfigured) |
 | `GET /api/leads` | `leads:view` | Scoped list + tab counts + options |
 | `POST /api/leads` | `leads:manage` | Create a lead |
 | `GET /api/leads/[id]` | `leads:view` | Detail with follow-ups and activity |
@@ -66,11 +67,15 @@ Every handler uses `requireSession`, Zod validation, `errorResponse` envelopes a
 | `POST /api/applications` | `applications:manage` | Create for an existing or inline customer |
 | `GET /api/applications/[id]` | `applications:view` | Detail + linked records |
 | `PATCH /api/applications/[id]` | `applications:manage` | `UPDATE`, `SUBMIT`, `DOCUMENT`, `VERIFICATION`, `RECOMMEND`, `RESUBMIT` |
+| `POST /api/applications/[id]/documents/[documentId]/file` | `applications:manage` | Upload a PDF/PNG/JPEG (≤5 MB, sniffed, UUID name, sha256) |
+| `GET /api/applications/[id]/documents/[documentId]/file` | `applications:view` | Authorised streaming download (`private, no-store`, `nosniff`) |
 | `GET /api/customers` | `customers:view` | Scoped customer list + tab counts |
 | `GET /api/customers/[id]` | `customers:view` | Full Customer 360 aggregate |
 | `POST /api/credit/[id]/decision` | `credit:decide` | `APPROVE`, `REJECT`, `SEND_BACK` |
 | `PATCH /api/sanctions/[id]` | `sanctions:decide` | `ACCEPT`, `APPROVE`, `REJECT` |
+| `POST /api/sanctions` | `sanctions:decide` | Raise a sanction from a credit-approved application (amount ≤ credit decision) |
 | `PATCH /api/disbursements/[id]` | `disbursements:process` / `disbursements:approve` | `PROCESS`, `RECOMMEND`, `AUTHORIZE`, `COMPLETE`, `REJECT` |
+| `POST /api/disbursements` | `disbursements:process` | Raise a disbursement from an approved sanction (amount ≤ sanction) |
 | `PATCH /api/collections/[id]` | `collections:manage` | `LOG_CONTACT`, `SET_PTP`, `MOVE_STATUS`, `RESOLVE` |
 | `POST /api/repayments/[id]` | `collections:manage` | Record a DEMO repayment against an instalment |
 | `POST /api/tasks` | `tasks:manage` | Create a task |
@@ -142,8 +147,9 @@ These are deliberately not simulated with fake responses:
 - **Credit bureau and fraud APIs.** Risk bands and verification states are synthetic.
 - **Payment gateway, NACH mandate and bank disbursement files.** Payouts end at a DEMO bank reference; no money moves.
 - **WhatsApp / SMS / email delivery.** Follow-ups are internal notes; no messages are sent.
-- **Sanction creation from a credit-approved application.** Seed data contains sanction records; the UI can act on existing records but does not raise a new one yet.
 - **Customer master editing and free-text notes.** Customer 360 is an aggregation; remarks come from credit/sanction/disbursement/collection/grievance records.
 - **Grievance resolution notes** persist in the audit summary rather than a dedicated store field.
-- **Password recovery, SSO, MFA, session revocation list.** Out of scope for the demo.
+- **Password recovery, SSO, MFA.** Out of scope for the demo; server-side session revocation is implemented.
 - **Server-side pagination for very large audit/user sets** and asynchronous export jobs. Current pagination is client-side over scoped results.
+
+Completed: sanctions are raised from credit-approved applications (`POST /api/sanctions`) and disbursements from approved sanctions (`POST /api/disbursements`); both are permission- and record-checked.

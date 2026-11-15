@@ -18,38 +18,47 @@ Status as of 2026-11-15. Items marked **approval required** have deliberately no
 - [x] Access Control Center at `/access-control`: user access, roles & matrix, grants & delegation, access history, user comparison, effective-permission preview.
 - [x] Permission audit trail: actor, target, before/after, reason, IP, expiry; read-only over HTTP.
 - [x] Privilege-escalation protections: self-change block, protected identity lock, rank hierarchy, permission-subset checks, admin-authority separation, delegation cycle detection.
-- [x] `npm run typecheck` clean; `npm run build` succeeds (38 routes).
+- [x] `npm run typecheck` clean; `npm run build` succeeds.
 - [x] Authorization matrix exercised over HTTP with real sessions (see `access-control.md` §8).
 
 ## 2. Verification notes
 
-- Typecheck and production build pass.
-- Authorization tests cover positive and negative paths for the access API, grants, expiry, revocation, record scoping, denial precedence and unauthorised access.
-- Interactive browser verification of client-only interactions (modals, tab switching) is limited in the current environment: the automated browser tab reports `document.visibilityState === "hidden"`, so React streaming boundaries stay in the loading state. SSR HTML and API responses were verified directly instead.
-- A few role-reassignment HTTP probes were blocked by the local agent's permission classifier before reaching the app; those guards (`SELF_ROLE_CHANGE`, SA-only role grant, rank and permission-subset checks) are covered by code review and typecheck.
+- `npm run typecheck` and `npm run build` pass.
+- `scripts/security-regression.mjs` — **68/68** HTTP checks: anonymous rejection, CSRF origin block, cookie flags, server-side session revocation, forged-session rejection, login rate limiting, RBAC 403s, branch scoping, protected Super Admin, self-escalation and admin-authority separation, grant lifecycle (ALLOW → revoke → DENY → expiry), append-only audit, and document upload/download IDOR. Report: `.artifacts/security/results.json`.
+- `scripts/browser-smoke.mjs` — **42/42** real-browser checks in headless Chrome via CDP: form validation, sign-in, HttpOnly cookie unattached to `document.cookie`, canvas charts, sidebar permissions, table search and row navigation, modals and form validation, grant modal record-scope fields, user comparison diff, access history, mobile off-canvas navigation, secure logout. Report: `.artifacts/browser/results.json`.
+- Authorization now runs **before** body validation on `POST /api/access-control/roles` and `/grants`, so unauthorised callers receive `403` rather than schema feedback.
 
 ## 3. Awaiting approval
 
-- [ ] **Production database schema.** No schema was changed. The relational model for roles, role permissions, user branch scopes, access grants and append-only permission audits is proposed in `access-control.md` §9. A migration must not be written until explicitly approved.
+- [ ] **Production database schema.** No schema was changed. The relational model for roles, role permissions, user branch scopes, access grants and append-only permission audits is proposed in `docs/database-persistence.md`. A migration must not be written until explicitly approved.
+- [ ] **Staging deployment.** Configuration and preflight are documented in `docs/staging-readiness.md`; nothing has been deployed.
 - [ ] **Email/notification on access changes.** Requires a transport; currently no message is sent.
 - [ ] **Custom permission creation.** Roles can be customized; the permission catalogue is fixed.
 
 ## 4. External integrations (intentionally not simulated)
 
-- [ ] Binary document upload/storage/download.
 - [ ] eSign provider callbacks and signed artefacts.
 - [ ] Credit bureau and fraud APIs.
 - [ ] Payment gateway, NACH mandates and bank disbursement files.
 - [ ] WhatsApp / SMS / email delivery.
-- [ ] Sanction creation directly from a credit-approved application (existing seeded sanctions only).
 - [ ] Customer master editing and free-text notes.
-- [ ] Password recovery, SSO, MFA, server-side session revocation.
+- [ ] Password recovery, SSO, MFA.
 - [ ] Server-side pagination for large audit/user sets and asynchronous export jobs.
+
+Completed in the production-readiness milestone (not external integrations):
+- [x] Sanction creation from a credit-approved application (`POST /api/sanctions`, `sanctions:decide`, amount capped by the credit decision).
+- [x] Disbursement creation from an approved sanction (`POST /api/disbursements`, `disbursements:process`, amount capped by the sanction).
+- [x] Application status follows the loan to `CLOSED` when the outstanding balance reaches zero.
+- [x] Server-side session registry with revocation on logout and on user deactivation.
+- [x] Fail-closed storage adapter selection with no silent in-memory fallback in production.
+- [x] CSRF origin enforcement for mutating requests and Secure cookies in production.
+- [x] Private binary document storage with content sniffing, size limits, sanitized names, checksums and authorised streaming downloads.
+- [x] Real-browser and HTTP security regression suites.
 
 Missing integrations are marked as awaiting backend in the UI; no fake success responses are returned.
 
 ## 5. Operational notes
 
 - All demo state is in memory (`globalThis.__fincloudLmsStore`) and resets on process restart.
-- Production deployments must supply `SESSION_SECRET`-equivalent configuration and a real secret store; the demo secret is fixed for reproducibility.
+- Production refuses to start without `FINCLOUD_SESSION_SECRET` (≥32 chars) and an explicit `FINCLOUD_STORE_ADAPTER`; see `database-persistence.md`.
 - The protected Super Admin identity must be configured out-of-band and must never be grantable through the API.

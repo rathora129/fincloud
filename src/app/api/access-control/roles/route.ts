@@ -1,4 +1,4 @@
-import { ApiError, clientIp, errorResponse, requireSession } from "@/server/access";
+import { ApiError, assertPermission, clientIp, errorResponse, requireSession } from "@/server/access";
 import { createRoleDefinition, type RoleCreateInput } from "@/server/access-control";
 import { roleCreateSchema } from "@/lib/validation/access";
 import type { Permission } from "@/lib/types";
@@ -6,6 +6,7 @@ import type { Permission } from "@/lib/types";
 export async function POST(request: Request) {
   try {
     const user = await requireSession();
+    assertPermission(user, "roles:manage");
     const body = await request.json().catch(() => null);
     const parsed = roleCreateSchema.safeParse(body);
     if (!parsed.success) {

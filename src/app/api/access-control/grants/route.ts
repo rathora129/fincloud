@@ -1,4 +1,4 @@
-import { ApiError, clientIp, errorResponse, requireSession } from "@/server/access";
+import { ApiError, assertPermission, clientIp, errorResponse, requireSession } from "@/server/access";
 import { createGrant, type GrantInput } from "@/server/access-control";
 import { grantSchema } from "@/lib/validation/access";
 import type { Permission } from "@/lib/types";
@@ -6,6 +6,7 @@ import type { Permission } from "@/lib/types";
 export async function POST(request: Request) {
   try {
     const user = await requireSession();
+    assertPermission(user, "access:manage");
     const body = await request.json().catch(() => null);
     const parsed = grantSchema.safeParse(body);
     if (!parsed.success) {

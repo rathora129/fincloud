@@ -546,11 +546,33 @@ export function recordCollectionRepayment(
     .filter((item) => item.loanAccountId === loan.id && item.status === "PENDING")
     .sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime())[0];
 
+  let loanClosed = false;
   if (loan.outstanding <= 0) {
     loan.status = "CLOSED";
     loan.dpd = 0;
-  } else if (remainingOverdue.length === 0) {
-    loan.status = "ACTIVE";
+    loanClosed = true;
+
+    const application = store.applications.find((item) => item.id === loan.applicationId);
+    if (application && application.status !== "CLOSED") {
+      application.status = "CLOSED";
+      application.updatedAt = nowIso;
+      application.activities.push({
+        id: makeId("act"),
+        at: nowIso,
+        actorId: user.id,
+        type: "LOAN_CLOSED",
+        summary: `Loan ${loan.ref} fully settled. Application closed (DEMO).`,
+      });
+      appendAudit(
+        store,
+        user.id,
+        "LOAN_CLOSED",
+        "LOAN",
+        loan.id,
+        `Loan ${loan.ref} fully settled; application ${application.ref} closed.`,
+      );
+    }
+  } else if (remainingOverdue.length === 0) {    loan.status = "ACTIVE";
     loan.dpd = 0;
   } else {
     loan.status = "OVERDUE";
@@ -607,8 +629,10 @@ export function recordCollectionRepayment(
     repayment,
     loan,
     collectionCase,
-    message: caseResolved
-      ? "Repayment recorded. No overdue instalments remain — case resolved."
-      : "Repayment recorded. Overdue position updated.",
+    message: loanClosed
+      ? "Repayment recorded. Loan account is fully settled and closed (DEMO)."
+      : caseResolved
+        ? "Repayment recorded. No overdue instalments remain — case resolved."
+        : "Repayment recorded. Overdue position updated.",
   };
 }

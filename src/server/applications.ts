@@ -392,6 +392,7 @@ export function createApplication(
     status: "PENDING",
     fileName: null,
     uploadedAt: null,
+    fileId: null,
   }));
 
   const application: LoanApplication = {

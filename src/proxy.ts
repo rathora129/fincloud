@@ -13,14 +13,42 @@ const PROTECTED_PREFIXES = [
   "/authorizations",
   "/reports",
   "/users",
+  "/access-control",
   "/audit-logs",
   "/operations",
   "/customers",
   "/profile",
 ];
 
+const MUTATING_METHODS = new Set(["POST", "PATCH", "PUT", "DELETE"]);
+
+function crossSiteMutation(request: NextRequest) {
+  if (!MUTATING_METHODS.has(request.method)) return false;
+  if (request.headers.get("sec-fetch-site") === "cross-site") return true;
+  const origin = request.headers.get("origin");
+  if (!origin) return false;
+  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
+  try {
+    return Boolean(host && new URL(origin).host !== host);
+  } catch {
+    return true;
+  }
+}
+
 export function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
+
+  if (pathname.startsWith("/api/")) {
+    // Same-origin enforcement for state-changing API calls (CSRF defense).
+    if (crossSiteMutation(request)) {
+      return NextResponse.json(
+        { error: { code: "CSRF_BLOCKED", message: "Cross-site request blocked." } },
+        { status: 403 },
+      );
+    }
+    return NextResponse.next();
+  }
+
   if (!PROTECTED_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`))) {
     return NextResponse.next();
   }
@@ -37,6 +65,7 @@ export function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
+    "/api/:path*",
     "/dashboard/:path*",
     "/leads/:path*",
     "/applications/:path*",
@@ -48,6 +77,7 @@ export const config = {
     "/authorizations/:path*",
     "/reports/:path*",
     "/users/:path*",
+    "/access-control/:path*",
     "/audit-logs/:path*",
     "/operations/:path*",
     "/customers/:path*",

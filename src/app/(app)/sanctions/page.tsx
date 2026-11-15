@@ -4,7 +4,7 @@ import { BadgeCheck, Banknote, Clock3, FileCheck2, ShieldCheck, XCircle } from "
 import { getSessionUser } from "@/server/session";
 import { buildScope, inScope } from "@/server/access";
 import { getStore } from "@/server/store";
-import { SANCTION_TABS, getSanctionQueue, parseSanctionTab } from "@/server/sanctions";
+import { SANCTION_TABS, getSanctionEligibleApplications, getSanctionQueue, parseSanctionTab } from "@/server/sanctions";
 import { can } from "@/lib/rbac";
 import { formatINRCompact, formatNumber } from "@/lib/utils";
 import type { LoanProduct } from "@/lib/types";
@@ -13,6 +13,7 @@ import { StatCard } from "@/components/ui/stat-card";
 import { LinkTabs } from "@/components/ui/tabs";
 import { InlineNote, PermissionDenied } from "@/components/ui/states";
 import { SanctionFilters } from "./sanction-filters";
+import { SanctionCreateDialog } from "./sanction-create-dialog";
 import { SanctionTable } from "./sanction-table";
 
 export const metadata = { title: "Sanctions" };
@@ -41,6 +42,8 @@ export default async function SanctionsPage({
   const scope = buildScope(user);
   const store = getStore();
   const queue = getSanctionQueue(scope, tab, filters);
+  const canCreate = can(user, "sanctions:decide");
+  const eligibleApplications = canCreate ? getSanctionEligibleApplications(scope) : [];
 
   const branches = store.branches
     .filter((branch) => inScope(scope, branch.id))
@@ -89,6 +92,7 @@ export default async function SanctionsPage({
         breadcrumbs={[{ label: "Risk & fulfilment" }, { label: "Sanctions" }]}
         actions={
           <>
+            {canCreate ? <SanctionCreateDialog applications={eligibleApplications} /> : null}
             <Link
               href="/credit"
               className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-ink-200 bg-white px-3 text-[11.5px] font-medium text-ink-600 transition hover:border-ink-300 hover:text-ink-900"

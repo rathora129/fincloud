@@ -144,8 +144,18 @@ stateDiagram-v2
 The detail view derives the EMI from the approved amount, rate and tenure, plus total payable. It links to
 a disbursement if one already exists for the sanction.
 
-> Sanctions are seeded in the demo. There is no UI/API to raise a **new** sanction from a
-> `CREDIT_APPROVED` application yet — that intake is listed under backend integration below.
+### 5.1 Raising a sanction (implemented)
+
+`POST /api/sanctions` creates a sanction from a `CREDIT_APPROVED` application.
+
+- Permission: `sanctions:decide`; the application must also pass branch scope and record-level
+  `sanctions:view` visibility.
+- The amount must be `≤` the credit decision's approved amount; rate, tenure, processing fee and
+  disbursement mode are validated by `sanctionCreateSchema`.
+- An application can carry only one live (non-`REJECTED`) sanction. A rejected offer can be raised again.
+- The new sanction starts in `PENDING_ACCEPTANCE`; the application stays `CREDIT_APPROVED` until the
+  sanction is approved, at which point it moves to `SANCTIONED`.
+- The sanction, the application timeline and the audit log each receive an entry.
 
 ---
 
@@ -178,6 +188,16 @@ stateDiagram-v2
 | `AUTHORIZE` | `SANCTIONED → DISBURSEMENT_PENDING` | Sent to the authorization queue; still no money moves |
 | `COMPLETE` | Any linked application → `DISBURSED` | Creates a loan account and EMI schedule; generates a `DEMO…` bank reference; remarks state that no real transfer occurred |
 | `REJECT` | `DISBURSEMENT_PENDING → SANCTIONED` | Remark ≥ 4 chars required; payout can be retried |
+
+### 6.0 Raising a disbursement (implemented)
+
+`POST /api/disbursements` creates a `NEW` disbursement from an `APPROVED` sanction.
+
+- Permission: `disbursements:process`; the sanction must also pass branch scope and record-level
+  `disbursements:process` visibility.
+- The amount must be `≤` the sanctioned amount; the mode is `NEFT`, `IMPS` or `UPI`.
+- Only one live (non-`REJECTED`) disbursement may exist per sanction.
+- No money moves at creation; the record enters the maker-checker flow above.
 
 ### 6.1 Loan creation on `COMPLETE`
 
@@ -305,6 +325,19 @@ disbursement authorization flow is modelled separately inside the disbursement s
 - **Audit log** — every mutation in this document appends an entry (`src/server/audit.ts`, capped at 500
   entries). The audit view requires `audit:view`.
 
+### Document files
+
+`POST /api/applications/:id/documents/:documentId/file` accepts `multipart/form-data` (field `file`).
+`applications:manage` plus record visibility is required, and the application must be `NEW`, `IN_PROCESS`
+or `SENT_BACK`. The server sniffs the magic bytes (PDF/PNG/JPEG), rejects a declared/actual MIME mismatch,
+enforces the 5 MB limit, writes a generated filename with mode `0600` under `.data/documents` (`0700`), and
+stores the SHA-256 in `StoredDocumentFile`. The document moves to `UPLOADED`; the binary cannot be replaced
+once attached.
+
+`GET` on the same path streams the file as an attachment to any user with `applications:view` who passes
+branch and record access, with `Cache-Control: private, no-store` and `X-Content-Type-Options: nosniff`.
+Each download is audited. Seed documents carry metadata only (`fileId: null`) and show no download link.
+
 ---
 
 ## 12. Cross-cutting gates
@@ -317,8 +350,9 @@ disbursement authorization flow is modelled separately inside the disbursement s
    `403 OUT_OF_SCOPE`; missing records return `404`.
 4. **Validation** — Zod schemas in `src/lib/validation` check shape and basic bounds before the domain
    layer applies business rules. A collection of field errors returns `422 VALIDATION`.
-5. **Demo guardrails** — no money moves, no real documents, no external messaging, no bureau, no eSign
-   provider. Every simulated action is labelled DEMO in the UI and in stored remarks.
+5. **Demo guardrails** — no money moves, no external messaging, no bureau and no eSign provider. Document
+   binaries are synthetic, private and never committed. Every simulated action is labelled DEMO in the UI
+   and in stored remarks.
 
 ---
 
@@ -326,10 +360,7 @@ disbursement authorization flow is modelled separately inside the disbursement s
 
 | Gap | Impact | Where marked |
 | --- | --- | --- |
-| No sanction intake from `CREDIT_APPROVED` applications | New files stop after credit approval; seeded sanctions continue the demo | Sanctions page, checklist |
-| No disbursement intake from approved sanctions | New sanctions cannot generate payouts; seeded disbursements continue | Disbursements page |
 | Repayment settlement only for the oldest overdue instalment | No prepayment, part-payment or early closure | Collections detail |
 | Demo EMI schedule capped at 6–12 instalments | Lifetime schedule is illustrative, not the full tenure | Disbursement completion |
-| Loan closure does not move the application to `CLOSED` | Application remains `DISBURSED`; closure is reflected on the loan | Customer 360 |
 | No background scheduler | DPD, bucket movement, penalties and task escalation do not advance on a timer | Seeded data only |
 | No free-text customer notes | Remarks are derived from lifecycle records | Customer 360 |

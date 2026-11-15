@@ -449,6 +449,7 @@ export function convertLead(
     status: "PENDING" as const,
     fileName: null,
     uploadedAt: null,
+    fileId: null,
   }));
 
   const application = {

@@ -5,6 +5,7 @@ import { DEMO_PASSWORD, departmentForRole } from "./seed";
 import { appendAudit, getStore, makeId } from "./store";
 import { ApiError, assertBranchScope, inScope } from "./access";
 import { effectivePermissionsForUser, getRoleDefinition, getRoleRank, isProtectedIdentity } from "./permissions";
+import { revokeAllUserSessions } from "./session";
 import { logPermissionChange } from "./access-log";
 import { matchesText, sortBy } from "./query";
 
@@ -310,13 +311,16 @@ export function setUserStatus(
   }
 
   record.status = status;
+  const revokedSessions = status === "INACTIVE" ? revokeAllUserSessions(record.id) : 0;
   appendAudit(
     store,
     actor.id,
     "USER_STATUS_CHANGED",
     "User",
     record.id,
-    `${record.name} set to ${status === "ACTIVE" ? "active" : "inactive"}.`,
+    `${record.name} set to ${status === "ACTIVE" ? "active" : "inactive"}.${
+      revokedSessions ? ` ${revokedSessions} active session(s) revoked.` : ""
+    }`,
   );
   logPermissionChange({
     actorId: actor.id,

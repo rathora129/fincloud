@@ -1,16 +1,28 @@
-import { getSessionUser, SESSION_COOKIE } from "@/server/session";
+import { cookies } from "next/headers";
+import {
+  SESSION_COOKIE,
+  clearedSessionCookieHeader,
+  getSessionUser,
+  revokeSession,
+  verifySessionToken,
+} from "@/server/session";
 import { appendAudit, getStore } from "@/server/store";
 
-export async function POST() {
+export async function POST(request: Request) {
+  const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
+  const jar = await cookies();
+  const payload = verifySessionToken(jar.get(SESSION_COOKIE)?.value);
   const user = await getSessionUser();
-  if (user) {
-    appendAudit(getStore(), user.id, "LOGOUT", "User session", user.id, "Signed out of the DEMO workspace");
+
+  if (payload) {
+    revokeSession(payload.sid);
   }
+  if (user) {
+    appendAudit(getStore(), user.id, "LOGOUT", "User session", user.id, "Signed out and revoked the session", ip);
+  }
+
   const response = Response.json({ ok: true });
-  response.headers.append(
-    "Set-Cookie",
-    `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${process.env.NODE_ENV === "production" ? "; Secure" : ""}`,
-  );
+  response.headers.append("Set-Cookie", clearedSessionCookieHeader());
   return response;
 }
 

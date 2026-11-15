@@ -10,6 +10,7 @@ import type {
   Scope,
   SessionUser,
 } from "@/lib/types";
+import type { DisbursementCreateInput } from "@/lib/validation/disbursements";
 import { ApiError, assertBranchScope, assertRecordPermission, canViewRecord, inScope } from "./access";
 import { appendAudit, getStore, makeId, nextSequence } from "./store";
 import { inDateRange, sortBy } from "./query";
@@ -69,6 +70,10 @@ export type DisbursementSummary = {
 
 function disbursementOwnerId(disbursement: Disbursement): string | undefined {
   return getStore().applications.find((application) => application.id === disbursement.applicationId)?.ownerId;
+}
+
+function sanctionOwnerId(sanction: Sanction): string | undefined {
+  return getStore().applications.find((application) => application.id === sanction.applicationId)?.ownerId;
 }
 
 function disbursementVisible(scope: Scope, disbursement: Disbursement): boolean {
@@ -288,6 +293,184 @@ export function getDisbursementDetail(scope: Scope, id: string): DisbursementDet
     schedule,
     emiAmount,
     isCompleted: disbursement.status === "COMPLETED",
+  };
+}
+
+export type DisbursementEligibleSanction = {
+  id: ID;
+  ref: string;
+  applicationId: ID;
+  applicationRef: string;
+  customerId: ID;
+  customerName: string;
+  approvedAmount: number;
+  interestRate: number;
+  tenureMonths: number;
+  disbursementMode: Sanction["disbursementMode"];
+  decidedAt: string | null;
+  branchId: ID;
+  branchName: string;
+  customerCity: string;
+};
+
+/** Approved sanctions that have no live (non-rejected) disbursement request yet. */
+export function getDisbursementEligibleSanctions(scope: Scope): DisbursementEligibleSanction[] {
+  const store = getStore();
+  const applicationById = new Map(store.applications.map((application) => [application.id, application]));
+  const customerById = new Map(store.customers.map((customer) => [customer.id, customer]));
+  const branchById = new Map(store.branches.map((branch) => [branch.id, branch]));
+
+  return store.sanctions
+    .filter((sanction) => sanction.status === "APPROVED")
+    .filter(
+      (sanction) =>
+        inScope(scope, sanction.branchId) &&
+        canViewRecord(
+          scope.user,
+          "SANCTION",
+          sanction.id,
+          "disbursements:process",
+          sanction.branchId,
+          sanctionOwnerId(sanction),
+        ) &&
+        !store.disbursements.some(
+          (disbursement) => disbursement.sanctionId === sanction.id && disbursement.status !== "REJECTED",
+        ),
+    )
+    .sort((a, b) => new Date(b.decidedAt ?? b.requestedAt).getTime() - new Date(a.decidedAt ?? a.requestedAt).getTime())
+    .map((sanction) => {
+      const application = applicationById.get(sanction.applicationId);
+      const customer = customerById.get(sanction.customerId);
+      return {
+        id: sanction.id,
+        ref: sanction.ref,
+        applicationId: sanction.applicationId,
+        applicationRef: application?.ref ?? "—",
+        customerId: sanction.customerId,
+        customerName: customer?.name ?? "Unknown customer",
+        approvedAmount: sanction.approvedAmount,
+        interestRate: sanction.interestRate,
+        tenureMonths: sanction.tenureMonths,
+        disbursementMode: sanction.disbursementMode,
+        decidedAt: sanction.decidedAt,
+        branchId: sanction.branchId,
+        branchName: branchById.get(sanction.branchId)?.name ?? "—",
+        customerCity: customer?.city ?? "—",
+      };
+    });
+}
+
+export type CreateDisbursementResult = {
+  id: ID;
+  ref: string;
+  status: DisbursementStatus;
+  sanctionId: ID;
+  applicationId: ID;
+  amount: number;
+  mode: Disbursement["mode"];
+};
+
+/**
+ * Raises a disbursement request from an approved sanction. Requires disbursements:process
+ * (enforced by the API) plus record-level visibility on the sanction. No money moves here;
+ * the maker-checker steps run through applyDisbursementAction.
+ */
+export function createDisbursement(
+  user: SessionUser,
+  scope: Scope,
+  input: DisbursementCreateInput,
+): CreateDisbursementResult {
+  const store = getStore();
+  const sanction = store.sanctions.find((item) => item.id === input.sanctionId);
+  if (!sanction) throw new ApiError(404, "NOT_FOUND", "Sanction not found.");
+
+  assertBranchScope(scope, sanction.branchId);
+  assertRecordPermission(
+    user,
+    "SANCTION",
+    sanction.id,
+    "disbursements:process",
+    sanction.branchId,
+    sanctionOwnerId(sanction),
+  );
+
+  if (sanction.status !== "APPROVED") {
+    throw new ApiError(409, "INVALID_STATE", "Only approved sanctions can be disbursed.");
+  }
+  if (input.amount > sanction.approvedAmount) {
+    throw new ApiError(
+      422,
+      "AMOUNT_EXCEEDS_SANCTION",
+      `Disbursement amount cannot exceed the sanctioned ${sanction.approvedAmount.toLocaleString("en-IN")} INR.`,
+    );
+  }
+
+  const liveDisbursement = store.disbursements.find(
+    (disbursement) => disbursement.sanctionId === sanction.id && disbursement.status !== "REJECTED",
+  );
+  if (liveDisbursement) {
+    throw new ApiError(409, "DISBURSEMENT_EXISTS", `Disbursement ${liveDisbursement.ref} already exists for this sanction.`);
+  }
+
+  const application = store.applications.find((item) => item.id === sanction.applicationId);
+  const now = new Date().toISOString();
+  const amount = Math.round(input.amount * 100) / 100;
+
+  const disbursement: Disbursement = {
+    id: makeId("dis"),
+    ref: nextSequence("DIS", store.disbursements.map((item) => item.ref)),
+    sanctionId: sanction.id,
+    applicationId: sanction.applicationId,
+    customerId: sanction.customerId,
+    amount,
+    mode: input.mode,
+    status: "NEW",
+    requestedAt: now,
+    processedAt: null,
+    processedBy: null,
+    bankRef: null,
+    remarks: input.remarks || "Disbursement request created from an approved sanction (DEMO, no bank transfer).",
+    branchId: sanction.branchId,
+    activities: [
+      {
+        id: makeId("act"),
+        at: now,
+        actorId: user.id,
+        type: "DISBURSEMENT_REQUESTED",
+        summary: `Disbursement request raised for ₹${amount.toLocaleString("en-IN")} via ${input.mode}.`,
+      },
+    ],
+  };
+  store.disbursements.push(disbursement);
+
+  if (application) {
+    application.activities.push({
+      id: makeId("act"),
+      at: now,
+      actorId: user.id,
+      type: "DISBURSEMENT_REQUESTED",
+      summary: `Disbursement ${disbursement.ref} requested against sanction ${sanction.ref} (DEMO).`,
+    });
+    application.updatedAt = now;
+  }
+
+  appendAudit(
+    store,
+    user.id,
+    "DISBURSEMENT_CREATED",
+    "DISBURSEMENT",
+    disbursement.id,
+    `Raised ${disbursement.ref} for ₹${amount.toLocaleString("en-IN")} against ${sanction.ref}.`,
+  );
+
+  return {
+    id: disbursement.id,
+    ref: disbursement.ref,
+    status: disbursement.status,
+    sanctionId: sanction.id,
+    applicationId: sanction.applicationId,
+    amount: disbursement.amount,
+    mode: disbursement.mode,
   };
 }
 

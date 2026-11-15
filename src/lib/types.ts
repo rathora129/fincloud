@@ -158,6 +158,30 @@ export type User = {
 
 export type UserRecord = User & { passwordHash: string };
 
+export type SessionRecord = {
+  id: ID;
+  userId: ID;
+  createdAt: string;
+  expiresAt: string;
+  revokedAt: string | null;
+  ip: string;
+  userAgent: string;
+};
+
+export type StoredDocumentFile = {
+  id: ID;
+  applicationId: ID;
+  documentId: ID;
+  branchId: ID;
+  originalName: string;
+  storedName: string;
+  mime: string;
+  size: number;
+  sha256: string;
+  uploadedBy: ID;
+  uploadedAt: string;
+};
+
 export type SessionUser = {
   id: ID;
   name: string;
@@ -277,6 +301,7 @@ export type DocumentCheck = {
   status: "PENDING" | "UPLOADED" | "VERIFIED" | "REJECTED";
   fileName: string | null;
   uploadedAt: string | null;
+  fileId: ID | null;
 };
 
 export type VerificationStatus = "PENDING" | "VERIFIED" | "FAILED";
@@ -554,6 +579,8 @@ export type Store = {
   roles: RoleDefinition[];
   accessGrants: AccessGrant[];
   permissionAudits: PermissionAudit[];
+  sessions: SessionRecord[];
+  documentFiles: StoredDocumentFile[];
   security: { protectedSuperAdminId: ID };
   customers: Customer[];
   leads: Lead[];

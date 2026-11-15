@@ -52,6 +52,11 @@ export async function postJson<T>(url: string, body?: unknown) {
   return response.data;
 }
 
+export async function postForm<T>(url: string, form: FormData) {
+  const response = await api.post<T>(url, form, { headers: { "Content-Type": "multipart/form-data" } });
+  return response.data;
+}
+
 export async function patchJson<T>(url: string, body?: unknown) {
   const response = await api.patch<T>(url, body);
   return response.data;
