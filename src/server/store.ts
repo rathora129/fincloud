@@ -1,10 +1,13 @@
 import type { Store } from "@/lib/types";
+import { storeAdapter } from "./env";
 import { buildSeed } from "./seed";
 
 const globalForStore = globalThis as unknown as { __fincloudLmsStore?: Store };
 
 export function getStore(): Store {
   if (!globalForStore.__fincloudLmsStore) {
+    // Fail closed: production must explicitly declare its adapter and acknowledge ephemeral mode.
+    storeAdapter();
     globalForStore.__fincloudLmsStore = buildSeed();
   }
   return globalForStore.__fincloudLmsStore;
