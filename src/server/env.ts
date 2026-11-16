@@ -50,3 +50,12 @@ export function persistenceSummary() {
     environment: process.env.NODE_ENV ?? "development",
   };
 }
+
+/**
+ * True only when the deployment explicitly runs the ephemeral demo store.
+ * In production that requires FINCLOUD_STORE_ADAPTER=memory together with
+ * FINCLOUD_ALLOW_EPHEMERAL_STORE=true; every other configuration throws.
+ */
+export function isEphemeralStore() {
+  return storeAdapter() === "memory";
+}

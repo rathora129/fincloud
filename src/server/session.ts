@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { SessionRecord, SessionUser } from "@/lib/types";
-import { sessionSecret } from "./env";
+import { sessionSecret, isEphemeralStore } from "./env";
 import { effectivePermissionsForUser, getRoleDefinition, isProtectedSuperAdmin } from "./permissions";
 import { getStore, makeId } from "./store";
 import { SESSION_COOKIE, SESSION_TTL_SECONDS } from "./session-constants";
@@ -9,6 +9,8 @@ import { SESSION_COOKIE, SESSION_TTL_SECONDS } from "./session-constants";
 export { SESSION_COOKIE, SESSION_TTL_SECONDS };
 
 type SessionPayload = { uid: string; exp: number; sid: string };
+
+export type SessionState = "active" | "missing" | "revoked";
 
 function base64url(input: Buffer | string) {
   return Buffer.from(input).toString("base64url");
@@ -38,12 +40,34 @@ export function verifySessionToken(token: string | undefined | null): SessionPay
   if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
   try {
     const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as SessionPayload;
-    if (!payload.uid || typeof payload.exp !== "number" || payload.exp < Date.now()) return null;
-    if (!payload.sid || typeof payload.sid !== "string") return null;
+    if (typeof payload?.uid !== "string" || !payload.uid) return null;
+    if (typeof payload.exp !== "number" || !Number.isFinite(payload.exp) || payload.exp <= Date.now()) return null;
+    if (typeof payload.sid !== "string" || !payload.sid) return null;
     return payload;
   } catch {
     return null;
   }
+}
+
+/**
+ * Stateless token acceptance is only safe where the store is an explicitly
+ * ephemeral demo store: in production `storeAdapter()` refuses `memory`
+ * unless FINCLOUD_ALLOW_EPHEMERAL_STORE=true was consciously set.
+ */
+export function isEphemeralSessionMode() {
+  return isEphemeralStore();
+}
+
+function findSession(sessionId: string) {
+  return getStore().sessions.find((item) => item.id === sessionId) ?? null;
+}
+
+export function sessionState(sessionId: string, userId: string): SessionState {
+  const session = findSession(sessionId);
+  if (!session) return "missing";
+  if (session.userId !== userId || session.revokedAt) return "revoked";
+  if (new Date(session.expiresAt).getTime() <= Date.now()) return "revoked";
+  return "active";
 }
 
 export function registerSession(userId: string, meta: { ip: string; userAgent: string }) {
@@ -68,10 +92,7 @@ export function registerSession(userId: string, meta: { ip: string; userAgent: s
 }
 
 export function activeSession(sessionId: string, userId: string): SessionRecord | null {
-  const session = getStore().sessions.find((item) => item.id === sessionId);
-  if (!session || session.userId !== userId || session.revokedAt) return null;
-  if (new Date(session.expiresAt).getTime() <= Date.now()) return null;
-  return session;
+  return sessionState(sessionId, userId) === "active" ? findSession(sessionId) : null;
 }
 
 export function revokeSession(sessionId: string) {
@@ -117,13 +138,24 @@ export function toSessionUser(userId: string): SessionUser | null {
   };
 }
 
-export async function getSessionContext(): Promise<{ user: SessionUser; payload: SessionPayload } | null> {
-  const jar = await cookies();
-  const payload = verifySessionToken(jar.get(SESSION_COOKIE)?.value);
+export function resolveSessionContext(
+  token: string | undefined | null,
+): { user: SessionUser; payload: SessionPayload } | null {
+  const payload = verifySessionToken(token);
   if (!payload) return null;
-  if (!activeSession(payload.sid, payload.uid)) return null;
+  const state = sessionState(payload.sid, payload.uid);
+  if (state === "revoked") return null;
+  // Ephemeral demo stores keep their session registry per serverless instance.
+  // A missing record only means another instance signed the cookie, so accept
+  // the signed, unexpired token and still require an active user account.
+  if (state === "missing" && !isEphemeralSessionMode()) return null;
   const user = toSessionUser(payload.uid);
   return user ? { user, payload } : null;
+}
+
+export async function getSessionContext(): Promise<{ user: SessionUser; payload: SessionPayload } | null> {
+  const jar = await cookies();
+  return resolveSessionContext(jar.get(SESSION_COOKIE)?.value);
 }
 
 export async function getSessionUser(): Promise<SessionUser | null> {
@@ -145,5 +177,5 @@ export function sessionCookieHeader(token: string, maxAge = SESSION_TTL_SECONDS)
 }
 
 export function clearedSessionCookieHeader() {
-  return sessionCookieHeader("", 0);
+  return `${sessionCookieHeader("", 0)}; Expires=Thu, 01 Jan 1970 00:00:00 GMT`;
 }

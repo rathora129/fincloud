@@ -528,7 +528,11 @@ async function scenarioLoginAndManager(page, cdp) {
   log("Sidebar navigation, table search and detail interaction");
   await page.click('nav[aria-label="Primary"] a', "Applications");
   await page.waitFor(`location.pathname === "/applications"`, { label: "/applications" });
-  await page.waitFor(`window.__fc.seenText("Applications")`);
+  // The route streams a loading skeleton before the RSC payload swaps in the
+  // table, so wait for the rows themselves rather than the sidebar label.
+  await page.waitFor(`document.querySelectorAll("main table tbody tr").length > 0`, {
+    label: "applications table rows",
+  });
   const initialRows = await page.countRows();
   check("applications table renders rows", initialRows > 0, `rows=${initialRows}`);
 
