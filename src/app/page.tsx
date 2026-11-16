@@ -5,5 +5,3 @@ export default async function HomePage() {
   const user = await getSessionUser();
   redirect(user ? "/dashboard" : "/login");
 }
-
-
